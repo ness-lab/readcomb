@@ -252,11 +252,11 @@ def matepairs_recomb():
             if 'no_match' in mode:                        
                 f_obj.write(record)
                 
-        # pair 2 doesn't exist and pair 1 has more than 2 snps
-        if pairs[query_name][1] == None and len(snps) > 1:
+        # pair 2 doesn't exist
+        if pairs[query_name][1] == None:
 
             #phase_change_counter update
-            if '1' in snp_lst and '2' in snp_lst2:
+            if '1' in snp_lst and '2' in snp_lst:
                 phase_change_counter += 1
 
                 if 'phase_change' in mode:                        
