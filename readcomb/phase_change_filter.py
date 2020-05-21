@@ -2,6 +2,7 @@ import os
 import argparse
 import pysam
 from cyvcf2 import VCF
+from tqdm import tqdm
 
 def args():
     parser = argparse.ArgumentParser(
@@ -14,12 +15,14 @@ def args():
                         type=str, help='VCF containing parents')
     parser.add_argument('-m', '--mode', required=False,
                         type=str, default='phase_change', help='Mode to execute the program')
+    parser.add_argument('-l', '--log', required=False,
+                        type=str, help='Log metrics to provide filename')
     parser.add_argument('-o', '--out', required=True,
                         type=str, help='File to write to')
 
     args = parser.parse_args()
 
-    return args.filename, args.vcf, args.mode, args.out
+    return args.filename, args.vcf, args.mode, args.log, args.out
 
 def check_snps(f_name, chromosome, left_bound, right_bound):
     '''
@@ -80,7 +83,7 @@ def cigar(record):
     cigar_tuples = record.cigartuples
     
     # initialize segment for building
-    segment = ''
+    segment = []
     
     # index to keep track of where we are in the query_segment
     query_segment = record.query_sequence
@@ -103,28 +106,26 @@ def cigar(record):
 
         # 0 is a match, just add it onto the segment 
         elif cigar_tuple[0] == 0:
-            segment += query_segment[index:index+cigar_tuple[1]]
+            segment += list(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
 
         # 1 is an insertion, treated same as a match
         elif cigar_tuple[0] == 1:
-            segment += query_segment[index:index+cigar_tuple[1]]
-            index += cigar_tuple[1]\
+            segment += list(query_segment[index:index+cigar_tuple[1]])
+            index += cigar_tuple[1]
 
-        # 2 is an insertion, add a gap to the query
+        # 2 is an deletion, add a gap to the query
         elif cigar_tuple[0] == 2:
-            segment += '-' * cigar_tuple[1]
+            segment += list('-' * cigar_tuple[1])
             index += cigar_tuple[1]
 
         else:
-            print('forgot to consider this: ' + str(cigar_tuple))
-            print(cigar_tuples)
-    
-    return segment
+            raise Exception('No condition for tuple ' + str(cigar_tuples.index(cigar_tuple)) + ' of ' + str(cigar_tuples))
+        
+    return ''.join(segment)
 
 
 def phase_detection(snps, segment, record):
-    
     '''
     snps: list of snps in the area of the sequence and record given by the function check_snps(),
         each snp is a cyvcf2 variant object
@@ -136,7 +137,7 @@ def phase_detection(snps, segment, record):
     cigar_tuples = record.cigartuples
     
     # check for no alignment
-    if cigar_tuples == None:
+    if not cigar_tuples:
         return snp_lst
     
     for snp in snps:
@@ -161,9 +162,6 @@ def phase_detection(snps, segment, record):
             current_base += cigar_tuples[current_tuple][1]
             current_tuple += 1
 
-
-        # indexing for VCF seems to be a bit weird and will sometimes be -1
-        # this has been fixed but left check in anyways
         if start < 0:
             raise Exception('VCF indexing is off. Check SNP at {}'.format(snp))
 
@@ -185,10 +183,10 @@ def phase_detection(snps, segment, record):
     return snp_lst
 
 def matepairs_recomb():
+
     '''
     Given a bam file object, return a human-readable file with aligned reference, quality string, 
         bam sequence, and SNPs    
-
     If mode='no_match', create a file with only no_match sequences.
     If mode='all', create a file with all sequences
     If mode='phase_change', create a file with only sequences with phase changes
@@ -198,7 +196,7 @@ def matepairs_recomb():
         Reference: reference_files_path + 'chlamy.5.3.w_organelles_mtMinus.fasta'
     '''
 
-    bam, vcf, mode, output_filename = args()
+    bam, vcf, mode, log, output_filename = args()
 
     bam_file_obj = pysam.AlignmentFile(bam, 'r')
     
@@ -214,7 +212,7 @@ def matepairs_recomb():
     # get mate pairs
     pairs = cache_pairs(bam_file_obj)
     
-    for query_name in pairs:
+    for query_name in tqdm(pairs):
         
         all_seq_counter += 1
         
@@ -227,6 +225,9 @@ def matepairs_recomb():
         snps = check_snps(vcf, record.reference_name, 
                         record.reference_start,
                         record.reference_start + record.query_alignment_length)
+
+        if len(snps) > 1:
+            seq_with_snps_counter += 1
         
         snp_lst = phase_detection(snps, segment, record)
         
@@ -241,7 +242,10 @@ def matepairs_recomb():
             
             snps2 = check_snps(vcf, record2.reference_name, 
                             record2.reference_start,
-                            record2.reference_start + record2.query_alignment_length)            
+                            record2.reference_start + record2.query_alignment_length)         
+
+            if len(snps2) > 1:
+                seq_with_snps_counter += 1   
             
             snp_lst2 = phase_detection(snps2, segment2, record2)
             
@@ -291,12 +295,26 @@ def matepairs_recomb():
     {} phase change reads extracted from {} total ({}%)
     {} phase change reads across mate pairs
     {} reads had no-match variants.
-    {} reads did not have enough SNPs (>= 2) to call ({}%)
-    '''.format(phase_change_counter, all_seq_counter, phase_change_counter / all_seq_counter, 
+    {} reads did not have enough SNPs (> 0) to call ({}%)
+    '''.format(phase_change_counter, all_seq_counter, round(phase_change_counter / all_seq_counter, 2), 
         phase_change_mate_pair_counter,
         no_match_counter, all_seq_counter - seq_with_snps_counter,
-        (all_seq_counter - seq_with_snps_counter) / all_seq_counter)
+        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter, 2))
     )
+
+    if log:
+        needs_header = True
+        if os.path.isfile(log):	
+            needs_header = False	
+        with open(log, 'a') as f:	
+            if needs_header:	
+                fieldnames = ['phase_change_reads', 'total_reads',	
+                'no_match_reads', 'phase_change_across_mate_pairs',	
+                'no_snp_reads']	
+                out_values = [phase_change_counter, all_seq_counter, no_match_counter,	
+                        phase_change_mate_pair_counter, all_seq_counter - seq_with_snps_counter]	
+                f.write(','.join(fieldnames) + '\n')	
+                f.write(','.join([str(n) for n in out_values]) + '\n')
 
 
 if __name__ == '__main__':
