@@ -26,8 +26,13 @@ def args():
 
 def check_snps(f_name, chromosome, left_bound, right_bound):
     '''
-    Using cyvcf, go through each of the breakpoints and check the number of SNPs per segment.
-    Return the SNP locations in a list.
+    Generate all SNPs on given chromsome and VCF file within the left_bound and right_bound using cyvcf2
+    
+    f_name - string: filepath of a VCF file
+    chromsome - string: chromosome name
+    left_bound/right_bound - integer: 0-based index of reference sequence
+
+    Return list of cyvcf Variant objects
     '''
     vcf_in = VCF(f_name)
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
@@ -40,11 +45,12 @@ def check_snps(f_name, chromosome, left_bound, right_bound):
 def cache_pairs(bam_file_obj):
 
     '''
-    Function to cache mate pairs of a bam file
+    Iterates through a bam file to find mate pairs and cache them together in a dictionary
 
-    Returns a dictionary of the cached reads in the format:
+    bam_file_obj: pysam alignment file object
 
-    {read_name: (bam_record_1, bam_record_2), ...}
+    Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
+    records as the value. If there is no mate pair, the second object in the tuple is None.    
     '''
     
     cache = {}
@@ -68,17 +74,13 @@ def cache_pairs(bam_file_obj):
     
 
 def cigar(record):
-    '''
-    Parameters:
+    ''' 
+    Build the query segment using the cigar tuple given by the bam record so that it aligns with
+    indexes of SNPs in the VCF that are aligned to the reference sequence
+
     record: bam record from pysam alignment file
-    ref: reference sequence that is aligned with the query sequence obtained from a fasta file
     
-    Returns:
-    ref: modified reference sequence that was given with gaps if there are insertions in the query sequence
-    segment: dna sequence that is built using the bam cigar tuples and query segment
-    
-    Function for human readable version of mate pair sequence analysis. Takes in a bam record and a reference
-    sequence and builds the query segment using the index and cigar tuple given by the bam record
+    returns dna sequence string that is built using the bam cigar tuples and query segment
     '''
     cigar_tuples = record.cigartuples
     
@@ -127,9 +129,9 @@ def cigar(record):
 
 def phase_detection(snps, segment, record):
     '''
-    snps: list of snps in the area of the sequence and record given by the function check_snps(),
-        each snp is a cyvcf2 variant object
-    segment: string sequence that is the segment built by the function 
+    snps - list of variants: list of snps in the area of the sequence and record given by the function check_snps(),
+        can include snps that are outside of the area
+    segment - string: sequence that is the segment built by the function cigar()
     '''
     
     snp_lst = []
@@ -185,15 +187,15 @@ def phase_detection(snps, segment, record):
 def matepairs_recomb():
 
     '''
-    Given a bam file object, return a human-readable file with aligned reference, quality string, 
-        bam sequence, and SNPs    
-    If mode='no_match', create a file with only no_match sequences.
-    If mode='all', create a file with all sequences
-    If mode='phase_change', create a file with only sequences with phase changes
-    
-    Makes assumptions on the following file locations:
-        VCF: vcf_files_path + 'parental_filtered.vcf.gz'
-        Reference: reference_files_path + 'chlamy.5.3.w_organelles_mtMinus.fasta'
+    Parses arguements and filters bam records using SNPS from a vcf
+
+    bam - string: bam filepath
+    vcf - string: vcf filepath
+    mode - string:
+        phase_change - only write to output bam records that have phase changes
+        no_match - only write to output bam records that have a base that does not match either variation of a SNP
+    log - boolean: when true, logs sequence counts to a log file
+    output_filename - string: file to write the filtered bams to, by default the function writes to recomb_diagnosis.sam
     '''
 
     bam, vcf, mode, log, output_filename = args()
@@ -265,10 +267,6 @@ def matepairs_recomb():
 
                 if 'phase_change' in mode:                        
                     f_obj.write(record)
-
-
-            if mode == 'all':
-                f_obj.write(record)
 
         # both pairs exist        
         else:
