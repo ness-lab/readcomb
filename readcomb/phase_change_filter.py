@@ -43,7 +43,6 @@ def check_snps(f_name, chromosome, left_bound, right_bound):
 
 
 def cache_pairs(bam_file_obj):
-
     '''
     Iterates through a bam file to find mate pairs and cache them together in a dictionary
 
@@ -56,20 +55,21 @@ def cache_pairs(bam_file_obj):
     cache = {}
     
     paired = 0
-    total = 0
+    unpaired = 0
     
     for record in bam_file_obj:
         name = record.query_name
-        total += 1
         
         if name not in cache:
             cache[name] = [record,None]
+            unpaired += 1
         else:
             cache[name][1] = record
             paired += 1
+            unpaired -= 1
             
-    print('Paired: {paired}, Unpaired: {unpaired}'.format(paired=paired, unpaired=total-paired))    
-    return cache
+    print('Paired: {paired}, Unpaired: {unpaired}'.format(paired=paired, unpaired=unpaired))    
+    return cache, paired, unpaired
         
     
 
@@ -96,30 +96,30 @@ def cigar(record):
         return segment
 
     for cigar_tuple in cigar_tuples:
-        # 4 = soft clipping, the record.query_sequence has the portion that is soft clipping
-        # so we need to skip it with index
+      
+        # 1 is an insertion to query segment, skip it because SNPs are aligned to reference and do not exist in this region
+        # 4 is soft clipping, query sequence includes this but is not aligned to reference
         if cigar_tuple[0] == 4:
             index += cigar_tuple[1]
 
+        elif cigar_tuple[0] == 1:
+            segment.append(query_segment[index:index+cigar_tuple[1]])
+            index += cigar_tuple[1]
+
         # 5 = hard clipping, record.query_sequence does not have the portion that is
-        # hard clipping so we don't skip it and we don't add anything
+        # hard clipping so skip it and don't add anything
         elif cigar_tuple[0] == 5:
             continue
 
-        # 0 is a match, just add it onto the segment 
+        # 0 is a match, add it onto the segment 
         elif cigar_tuple[0] == 0:
-            segment += list(query_segment[index:index+cigar_tuple[1]])
+            segment.append(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
-
-        # 1 is an insertion, treated same as a match
-        elif cigar_tuple[0] == 1:
-            segment += list(query_segment[index:index+cigar_tuple[1]])
-            index += cigar_tuple[1]
-
-        # 2 is an deletion, add a gap to the query
+            
+        # 2 is an deletion to query segment, add a gap to realign it to reference
+        # don't add index to not moving further through the query segment
         elif cigar_tuple[0] == 2:
-            segment += list('-' * cigar_tuple[1])
-            index += cigar_tuple[1]
+            segment.append('-' * cigar_tuple[1])
 
         else:
             raise Exception('No condition for tuple ' + str(cigar_tuples.index(cigar_tuple)) + ' of ' + str(cigar_tuples))
@@ -156,10 +156,6 @@ def phase_detection(snps, segment, record):
             if cigar_tuples[current_tuple][0] == 1:
                 # shift the start to the right by the amount of insertion to compensate for it
                 start += cigar_tuples[current_tuple][1]
-            
-            elif cigar_tuples[current_tuple][0] == 2:
-                # shift the start to the left by the amount of deletion to compensate for it
-                start -= cigar_tuples[current_tuple][1]
 
             current_base += cigar_tuples[current_tuple][1]
             current_tuple += 1
@@ -197,7 +193,6 @@ def matepairs_recomb():
     log - boolean: when true, logs sequence counts to a log file
     output_filename - string: file to write the filtered bams to, by default the function writes to recomb_diagnosis.sam
     '''
-
     bam, vcf, mode, log, output_filename = args()
 
     bam_file_obj = pysam.AlignmentFile(bam, 'r')
@@ -212,92 +207,64 @@ def matepairs_recomb():
     all_seq_counter = 0
     
     # get mate pairs
-    pairs = cache_pairs(bam_file_obj)
+    pairs, paired, unpaired = cache_pairs(bam_file_obj)
     
     for query_name in tqdm(pairs):
-        
-        all_seq_counter += 1
-        
-        # initialize first record
-        record = pairs[query_name][0]
-        
-        # analyze cigar string
-        segment = cigar(record)
-                    
-        snps = check_snps(vcf, record.reference_name, 
-                        record.reference_start,
-                        record.reference_start + record.query_alignment_length)
 
-        if len(snps) > 1:
-            seq_with_snps_counter += 1
-        
-        snp_lst = phase_detection(snps, segment, record)
-        
-        # initialize second record if there is a matepair
-        if pairs[query_name][1]:
-            
-            seq_with_snps_counter += 1
-            
-            record2 = pairs[query_name][1]
-            
-            segment2 = cigar(record2)
-            
-            snps2 = check_snps(vcf, record2.reference_name, 
-                            record2.reference_start,
-                            record2.reference_start + record2.query_alignment_length)         
-
-            if len(snps2) > 1:
-                seq_with_snps_counter += 1   
-            
-            snp_lst2 = phase_detection(snps2, segment2, record2)
-            
-        #no_match_counter update - moved this out here because it's needed for both unpaired and paired mates
-        if 'N' in snp_lst:
-            no_match_counter += 1
-
-            if 'no_match' in mode:                        
-                f_obj.write(record)
+        snp_lst = []
+        for record in pairs[query_name]:
+            if record:
+                all_seq_counter += 1
                 
-        # pair 2 doesn't exist
-        if pairs[query_name][1] == None:
+                # analyze cigar string
+                segment = cigar(record)
+                            
+                snps = check_snps(vcf, record.reference_name, 
+                                record.reference_start,
+                                record.reference_start + record.query_alignment_length)
 
-            #phase_change_counter update
-            if '1' in snp_lst and '2' in snp_lst:
+                print(snps)
+                
+                snp_lst += phase_detection(snps, segment, record)
+
+                print(snp_lst)
+
+                if len(snps) > 0:
+                    seq_with_snps_counter += 1
+            
+                #no_match_counter update - moved this out here because it's needed for both unpaired and paired mates
+                if 'N' in snp_lst:
+                    no_match_counter += 1
+
+                    if 'no_match' in mode:                        
+                        f_obj.write(record)
+
+        #phase_change_counter update
+        if '1' in snp_lst and '2' in snp_lst:
+            
+            if pairs[query_name][1]:
+                phase_change_mate_pair_counter += 1
+            else:
                 phase_change_counter += 1
 
-                if 'phase_change' in mode:                        
-                    f_obj.write(record)
+            if 'phase_change' in mode:                   
+                f_obj.write(pairs[query_name][0])
 
-        # both pairs exist        
-        else:
-            
-            # no match in second pair
-            if 'N' in snp_lst2:
-                no_match_counter += 1
+                if pairs[query_name][1]:                                        
+                    f_obj.write(pairs[query_name][1])
 
-                if 'no_match' in mode:                        
-                    f_obj.write(record2)
-                
-                
-            # phase change across mate pairs
-            elif ('1' in (snp_lst + snp_lst2) and '2' in (snp_lst + snp_lst2)):
-                phase_change_mate_pair_counter += 1
-                
-                if mode == 'phase_change':
-                    f_obj.write(record)
 
-                    f_obj.write(record2)
     
     print('''
     Done.
-    {} phase change reads extracted from {} total ({}%)
-    {} phase change reads across mate pairs
+    {} phase changes reads from {} total unpaired ({}%)
+    {} phase changes reads across mate pairs from {} total paired ({}%)
     {} reads had no-match variants.
     {} reads did not have enough SNPs (> 0) to call ({}%)
-    '''.format(phase_change_counter, all_seq_counter, round(phase_change_counter / all_seq_counter, 2), 
-        phase_change_mate_pair_counter,
+    '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
+        phase_change_mate_pair_counter, paired, round(phase_change_mate_pair_counter / paired * 100, 2),
         no_match_counter, all_seq_counter - seq_with_snps_counter,
-        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter, 2))
+        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter * 100, 2))
     )
 
     if log:
