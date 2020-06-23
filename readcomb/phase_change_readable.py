@@ -24,7 +24,7 @@ def args():
                         type=str, help='FASTA reference file to align bam reads to')
     
     parser.add_argument('-m', '--mode', required=False,
-                        type=str, default='phase_change', help='Mode to execute the program')
+                        type=str, default='phase_change no_match', help='Mode to execute the program')
     
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Log metrics to provide filename')
@@ -289,7 +289,7 @@ def human_read_matepairs_recomb():
                 human_write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
             
             # no match in second pair
-            elif 'N' in snp_str2:
+            if 'N' in snp_str2:
                 no_match_counter += 1
 
                 if 'no_match' in mode:                        
@@ -297,10 +297,10 @@ def human_read_matepairs_recomb():
                 
                 
             # phase change across mate pairs
-            elif ('1' in (snp_str + snp_str2) and '2' in (snp_str + snp_str2)):
+            if ('1' in (snp_str + snp_str2) and '2' in (snp_str + snp_str2)):
                 phase_change_mate_pair_counter += 1
                 
-                if mode == 'phase_change':
+                if 'phase_change' in mode:
                     human_write_recomb('Pair 1', f_obj, snp_str, record, ref, segment)
 
                     human_write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
