@@ -2,59 +2,36 @@ import pandas as pd
 import numpy as np
 import pysam   
 import collections
+import argparse
 import os
+from phase_change_filter import check_snps
+from phase_change_filter import cache_pairs
 from Bio import SeqIO
 from cyvcf2 import VCF
 
-reference_files_path = os.path.dirname(__file__) + '../tests/'
+reference_files_path = os.path.dirname(__file__) + '../tests/chlamy.5.3.w_organelles_mtMinus.fasta'
 
-def check_snps(f_name, chromosome, left_bound, right_bound):
-    '''
-    Generate all SNPs on given chromsome and VCF file within the left_bound and right_bound using cyvcf2
-    
-    f_name - string: filepath of a VCF file
-    chromsome - string: chromosome name
-    left_bound/right_bound - integer: 0-based index of reference sequence
+def args():
+    parser = argparse.ArgumentParser(
+        description='filter BAM for reads containing phase changes and outputs data in a human readable text file', 
+        usage='python3.5 phase_change_filter.py [options]')
 
-    Return list of cyvcf Variant objects
-    '''
+    parser.add_argument('-b', '--bam', required=True,
+                        type=str, help='BAM to filter')
+    parser.add_argument('-v', '--vcf', required=True,
+                        type=str, help='VCF containing parents')
+    parser.add_argument('-r', '--reference', required=False,
+                        type=str, default=reference_files_path, help='FASTA reference file to align bam reads to')
+    parser.add_argument('-m', '--mode', required=False,
+                        type=str, default='phase_change', help='Mode to execute the program')
+    parser.add_argument('-l', '--log', required=False,
+                        type=str, help='Log metrics to provide filename')
+    parser.add_argument('-o', '--out', default='recomb_diagnosis', required=False,
+                        type=str, help='File to write to')
 
-    vcf_in = VCF(f_name)
-    # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
-    # in order to keep code consistent
-    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
-    records = [rec for rec in vcf_in(region)]
-    return records
+    args = parser.parse_args()
 
-
-def cache_pairs(bam_file_obj):
-    '''
-    Iterates through a bam file to find mate pairs and cache them together in a dictionary
-
-    bam_file_obj: pysam alignment file object
-
-    Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
-    records as the value. If there is no mate pair, the second object in the tuple is None.    
-    '''
-    
-    cache = {}
-    
-    paired = 0
-    unpaired = 0
-    
-    for record in bam_file_obj:
-        name = record.query_name
-        
-        if name not in cache:
-            cache[name] = [record,None]
-            unpaired += 1
-        else:
-            cache[name][1] = record
-            paired += 1
-            unpaired -= 1
-            
-    print('Paired: {paired}, Unpaired: {unpaired}'.format(paired=paired, unpaired=unpaired))    
-    return cache
+    return args.bam, args.vcf, args.reference, args.mode, args.log, args.out
 
 def human_cigar(record, ref):
     '''
@@ -116,7 +93,7 @@ def human_cigar(record, ref):
 
     return ref, ''.join(segment)
 
-def phase_detection(snps, segment, record):
+def human_phase_detection(snps, segment, record):
     
     '''
     snps: list of snps in the area of the sequence and record given by the function check_snps(),
@@ -174,7 +151,7 @@ def phase_detection(snps, segment, record):
 
     return ''.join(snp_lst)
 
-def write_recomb(pair_info, f_obj, snp_str, record, ref, segment):
+def human_write_recomb(pair_info, f_obj, snp_str, record, ref, segment):
                     
     f_obj.write('{info}: {name} \n'.format(info=pair_info, name=record.query_name))
     
@@ -191,7 +168,7 @@ def write_recomb(pair_info, f_obj, snp_str, record, ref, segment):
 
     return
 
-def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filename='recomb_diagnosis'):
+def human_read_matepairs_recomb():
     '''
     Given a bam file object, return a human-readable file with aligned reference, quality string, 
         bam sequence, and SNPs    
@@ -205,13 +182,18 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
         Reference: reference_files_path + 'chlamy.5.3.w_organelles_mtMinus.fasta'
     '''
     
+    bam, vcf, reference, mode, log, output_filename = args()
+
+    # create bam pysam alignment file object
+    bam_file_obj = pysam.AlignmentFile(bam, 'r')
+
     f_obj = open(output_filename + '.txt', 'w')
 
     f_obj.write('Key: \nSequence: Start - End \nReference sequence \nPhred Scale Quality \nQuery alignment sequence \n')
     f_obj.write('1: CC2935, 2: CC2936, N: Does not match SNP \n\n')
     
     # get reference segment
-    seq_obj = SeqIO.parse(reference_files_path + 'chlamy.5.3.w_organelles_mtMinus.fasta', 'fasta')
+    seq_obj = SeqIO.parse(reference, 'fasta')
     
     # grab chromosome 1 from generator seq_obj
     chrom_1 = next(seq_obj)
@@ -224,7 +206,7 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
     all_seq_counter = 0
     
     # get mate pairs
-    pairs = cache_pairs(bam_file_obj)
+    pairs, paired, unpaired = cache_pairs(bam_file_obj)
     
     for query_name in pairs:
         
@@ -246,7 +228,7 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
                           record.reference_start,
                           record.reference_start + record.query_alignment_length)
         
-        snp_str = phase_detection(snps, segment, record)
+        snp_str = human_phase_detection(snps, segment, record)
         
         if len(snps) > 0:
             seq_with_snps_counter += 1
@@ -268,7 +250,7 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
                               record2.reference_start,
                               record2.reference_start + record2.query_alignment_length)            
             
-            snp_str2 = phase_detection(snps2, segment2, record2)
+            snp_str2 = human_phase_detection(snps2, segment2, record2)
             
             if len(snps2) > 0:
                 seq_with_snps_counter += 1
@@ -278,7 +260,7 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
             no_match_counter += 1
 
             if 'no_match' in mode:                        
-                write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
+                human_write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
                 
         # pair 2 doesn't exist and pair 1 has more than 2 snps
         if pairs[query_name][1] == None:
@@ -288,27 +270,27 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
                 phase_change_counter += 1
 
                 if 'phase_change' in mode:                        
-                    write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
+                    human_write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
 
 
             if mode == 'all':
-                write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
+                human_write_recomb('Unpaired', f_obj, snp_str, record, ref, segment)
 
         # both pairs exist        
         else:
             
                         
             if mode == 'all':
-                write_recomb('Pair 1', f_obj, snp_str, record, ref, segment)
+                human_write_recomb('Pair 1', f_obj, snp_str, record, ref, segment)
 
-                write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
+                human_write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
             
             # no match in second pair
             elif 'N' in snp_str2:
                 no_match_counter += 1
 
                 if 'no_match' in mode:                        
-                    write_recomb('Unpaired', f_obj, snp_str2, record2, ref2, segment2)
+                    human_write_recomb('Unpaired', f_obj, snp_str2, record2, ref2, segment2)
                 
                 
             # phase change across mate pairs
@@ -316,20 +298,41 @@ def human_read_matepairs_recomb(bam_file_obj, vcf, mode='no_match', output_filen
                 phase_change_mate_pair_counter += 1
                 
                 if mode == 'phase_change':
-                    write_recomb('Pair 1', f_obj, snp_str, record, ref, segment)
+                    human_write_recomb('Pair 1', f_obj, snp_str, record, ref, segment)
 
-                    write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
+                    human_write_recomb('Pair 2', f_obj, snp_str2, record2, ref2, segment2)
 
     
-    # print counters
-    print('Sequences with phase changes: ' + str(phase_change_counter))
-    print('Sequences with a no match: ' + str(no_match_counter))
-    print('Sequences with phase change across mate pairs: ' + str(phase_change_mate_pair_counter))
-    print('Sequences with SNP(s): ' + str(seq_with_snps_counter))
-    print('No. of sequences: ' + str(all_seq_counter))
+    print('''
+    Done.
+    {} phase changes reads from {} total unpaired ({}%)
+    {} phase changes reads across mate pairs from {} total paired ({}%)
+    {} reads had no-match variants.
+    {} reads did not have enough SNPs (> 0) to call ({}%)
+    '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
+        phase_change_mate_pair_counter, paired, round(phase_change_mate_pair_counter / paired * 100, 2),
+        no_match_counter, all_seq_counter - seq_with_snps_counter,
+        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter * 100, 2))
+    )
+
+    if log:
+        needs_header = True
+        if os.path.isfile(log):	
+            needs_header = False	
+        with open(log, 'a') as f:	
+            if needs_header:	
+                fieldnames = ['phase_change_reads', 'unpaired_reads',	
+                'phase_change_across_mate_pairs', 'paired_reads',
+                'no_match_reads'	
+                'no_snp_reads', 'total_reads']	
+                out_values = [phase_change_counter, unpaired, 
+                        phase_change_mate_pair_counter, paired,	
+                        no_match_counter, 
+                        all_seq_counter - seq_with_snps_counter, all_seq_counter]	
+                f.write(','.join(fieldnames) + '\n')	
+                f.write(','.join([str(n) for n in out_values]) + '\n')
 
 if __name__ == '__main__':
-    bam_file_obj = pysam.AlignmentFile('../tests/mock.sam', 'r')
-    human_read_matepairs_recomb(bam_file_obj, '../tests/mock.vcf.gz', mode='all')
+    human_read_matepairs_recomb()
         
     
