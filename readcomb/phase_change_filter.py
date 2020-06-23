@@ -51,7 +51,7 @@ def cache_pairs(bam_file_obj):
     Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
     records as the value. If there is no mate pair, the second object in the tuple is None.    
 
-    Also returns the paired and unpaired counters
+    Also returns the number of unpaired reads (unpaired) and the number of mate pairs (paired)
     '''
     
     cache = {}
@@ -256,7 +256,7 @@ def matepairs_recomb():
     print('''
     Done.
     {} phase changes reads from {} total unpaired ({}%)
-    {} phase changes reads across mate pairs from {} total paired ({}%)
+    {} phase changes reads across mate pairs from {} total read pairs ({}%)
     {} reads had no-match variants.
     {} reads did not have enough SNPs (> 0) to call ({}%)
     '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
@@ -272,7 +272,7 @@ def matepairs_recomb():
         with open(log, 'a') as f:	
             if needs_header:	
                 fieldnames = ['phase_change_reads', 'unpaired_reads',	
-                'phase_change_across_mate_pairs', 'paired_reads',
+                'phase_change_across_mate_pairs', 'read_pairs',
                 'no_match_reads'	
                 'no_snp_reads', 'total_reads']	
                 out_values = [phase_change_counter, unpaired, 

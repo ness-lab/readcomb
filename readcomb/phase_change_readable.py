@@ -9,8 +9,6 @@ from phase_change_filter import cache_pairs
 from Bio import SeqIO
 from cyvcf2 import VCF
 
-reference_files_path = os.path.dirname(__file__) + '../tests/chlamy.5.3.w_organelles_mtMinus.fasta'
-
 def args():
     parser = argparse.ArgumentParser(
         description='filter BAM for reads containing phase changes and outputs data in a human readable text file', 
@@ -18,14 +16,19 @@ def args():
 
     parser.add_argument('-b', '--bam', required=True,
                         type=str, help='BAM to filter')
+    
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents')
-    parser.add_argument('-r', '--reference', required=False,
-                        type=str, default=reference_files_path, help='FASTA reference file to align bam reads to')
+    
+    parser.add_argument('-r', '--reference', required=True,
+                        type=str, help='FASTA reference file to align bam reads to')
+    
     parser.add_argument('-m', '--mode', required=False,
                         type=str, default='phase_change', help='Mode to execute the program')
+    
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Log metrics to provide filename')
+    
     parser.add_argument('-o', '--out', default='recomb_diagnosis', required=False,
                         type=str, help='File to write to')
 
