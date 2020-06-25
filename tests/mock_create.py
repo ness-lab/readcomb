@@ -5,8 +5,13 @@ from cyvcf2 import Writer
 
 # os.path.dirname(__file__) is the directory of mock_create.py
 current_dir = os.path.dirname(__file__)
+
+# fixes issue where running mock_create.py in its directory causes file opening issues
+if current_dir == '':
+    current_dir = './'
+
 bam_files_path = current_dir + '/mock_sams/'
-vcf_files_path = current_dir + '/'
+vcf_files_path = current_dir
 
 
 def mock_sequence(snp_tuples, seq_len=150):
@@ -15,13 +20,15 @@ def mock_sequence(snp_tuples, seq_len=150):
     
     snp_tuples is a list of tuples that contains tuples in the form [(index, base), ...]
     where index is an integer and base is a string
+
+    this function uses 1-based indexing to be more compatible with VCFs that also use 1-based indexing
     
     returns a string of seq_len (default 150)
     '''
     seq = ['C'] * seq_len
     
     for snp in snp_tuples:
-        seq[snp[0]] = snp[1] 
+        seq[snp[0] - 1] = snp[1] 
         
     return ''.join(seq)
 
@@ -76,7 +83,7 @@ def mock_sam():
         'reference_start': 0,
         'mapping_quality': 60, 
         'cigarstring': '150M', 
-        'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        'query_sequence': mock_sequence([(50, 'A'), (100, 'T')]),
         },
         # phase change 2 to 1
         {'query_name': 'seq2', 
@@ -84,7 +91,7 @@ def mock_sam():
         'reference_start': 0,
         'mapping_quality': 60, 
         'cigarstring': '150M', 
-        'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+        'query_sequence': mock_sequence([(50, 'T'), (100, 'A')]),
         },
         # insertion before both SNPs, note that the reference_start is 20 instead of 0
         {'query_name': 'seq3',
@@ -92,7 +99,7 @@ def mock_sam():
          'reference_start': 20,
          'mapping_quality': 60,
          'cigarstring': '20I130M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'
+         'query_sequence': mock_sequence([(50, 'T'), (100, 'A')]),
         },
         # deletion before both SNPs
         {'query_name': 'seq4',
@@ -100,7 +107,7 @@ def mock_sam():
          'reference_start': 0,
          'mapping_quality': 60,
          'cigarstring': '10M10D140M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC'             
+         'query_sequence': mock_sequence([(40, 'T'), (90, 'A')]),             
         },
         # insertion between the SNPs
         {'query_name': 'seq5',
@@ -108,7 +115,7 @@ def mock_sam():
          'reference_start': 0,
          'mapping_quality': 60,
          'cigarstring': '60M10I80M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'T'), (110, 'A')]),
         },
         # deletion between the SNPs
         {'query_name': 'seq6',
@@ -116,7 +123,7 @@ def mock_sam():
          'reference_start': 0,
          'mapping_quality': 60,
          'cigarstring': '60M10D90M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'A'), (90, 'T')]),
         },
         # soft clipping at beginning and end
         {'query_name': 'seq7',
@@ -124,7 +131,7 @@ def mock_sam():
          'reference_start': 20,
          'mapping_quality': 60,
          'cigarstring': '20S110M20S',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'A'), (100, 'T')]),
         },
         # hard clipping at begging and end
         {'query_name': 'seq8',
@@ -132,20 +139,9 @@ def mock_sam():
          'reference_start': 20,
          'mapping_quality': 60,
          'cigarstring': '20H110M20H',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(30, 'A'), (80, 'T')], seq_len=110),
         },
     ]
-
-    for seq in unpaired_data:
-        segment = pysam.AlignedSegment(template.header)
-        segment.query_name = seq['query_name']
-        segment.reference_name = seq['reference_name']
-        segment.reference_start = seq['reference_start']
-        segment.mapping_quality = seq['mapping_quality']
-        segment.cigarstring = seq['cigarstring']
-        segment.query_sequence = seq['query_sequence']
-
-        mock.write(segment)
         
     paired_data = [
         # 2 mates that are both 150M and lineage 1 to lineage 2
@@ -154,7 +150,7 @@ def mock_sam():
          'reference_start': 0,
          'mapping_quality': 60,
          'cigarstring': '150M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'A'), (100, 'A')]),
          'next_reference_id': 0,
          'next_reference_start': 200,
          'template_length': 351            
@@ -164,7 +160,7 @@ def mock_sam():
          'reference_start': 200,
          'mapping_quality': 60,
          'cigarstring': '150M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'T'), (100, 'T')]),
          'next_reference_id': 0,
          'next_reference_start': 0,
          'template_length': -349            
@@ -175,7 +171,7 @@ def mock_sam():
          'reference_start': 0,
          'mapping_quality': 60,
          'cigarstring': '150M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCTCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'T'), (100, 'T')]),
          'next_reference_id': 0,
          'next_reference_start': 200,
          'template_length': 351            
@@ -185,24 +181,17 @@ def mock_sam():
          'reference_start': 200,
          'mapping_quality': 60,
          'cigarstring': '150M',
-         'query_sequence': 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCACCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+         'query_sequence': mock_sequence([(50, 'A'), (100, 'A')]),
          'next_reference_id': 0,
          'next_reference_start': 0,
          'template_length': -349            
         },
     ]
     
-    for seq in paired_data:
+    for seq_dict in paired_data + unpaired_data:
         segment = pysam.AlignedSegment(template.header)
-        segment.query_name = seq['query_name']
-        segment.reference_name = seq['reference_name']
-        segment.reference_start = seq['reference_start']
-        segment.mapping_quality = seq['mapping_quality']
-        segment.cigarstring = seq['cigarstring']
-        segment.query_sequence = seq['query_sequence']
-        segment.next_reference_id = seq['next_reference_id']
-        segment.next_reference_start = seq['next_reference_start']
-        segment.template_length = seq['template_length']
+        for key in seq_dict:
+            segment.__setattr__(key, seq_dict[key])
 
         mock.write(segment)
 

@@ -9,20 +9,24 @@ def args():
         description='filter BAM for reads containing phase changes', 
         usage='python3.5 phase_change_filter.py [options]')
 
-    parser.add_argument('-f', '--filename', required=True,
+    parser.add_argument('-b', '--bam', required=True,
                         type=str, help='BAM to filter')
+                        
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents')
+
     parser.add_argument('-m', '--mode', required=False,
                         type=str, default='phase_change', help='Mode to execute the program')
+
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Log metrics to provide filename')
-    parser.add_argument('-o', '--out', required=True,
-                        type=str, help='File to write to')
+
+    parser.add_argument('-o', '--out', required=False,
+                        type=str, default='recomb_diagnosis', help='File to write to')
 
     args = parser.parse_args()
 
-    return args.filename, args.vcf, args.mode, args.log, args.out
+    return args.bam, args.vcf, args.mode, args.log, args.out
 
 def check_snps(f_name, chromosome, left_bound, right_bound):
     '''
@@ -50,6 +54,8 @@ def cache_pairs(bam_file_obj):
 
     Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
     records as the value. If there is no mate pair, the second object in the tuple is None.    
+
+    Also returns the number of unpaired reads (unpaired) and the number of mate pairs (paired)
     '''
     
     cache = {}
@@ -222,24 +228,14 @@ def matepairs_recomb():
                 snps = check_snps(vcf, record.reference_name, 
                                 record.reference_start,
                                 record.reference_start + record.query_alignment_length)
-
-                print(snps)
                 
                 snp_lst += phase_detection(snps, segment, record)
-
-                print(snp_lst)
 
                 if len(snps) > 0:
                     seq_with_snps_counter += 1
             
-                #no_match_counter update - moved this out here because it's needed for both unpaired and paired mates
-                if 'N' in snp_lst:
-                    no_match_counter += 1
+                
 
-                    if 'no_match' in mode:                        
-                        f_obj.write(record)
-
-        #phase_change_counter update
         if '1' in snp_lst and '2' in snp_lst:
             
             if pairs[query_name][1]:
@@ -252,13 +248,19 @@ def matepairs_recomb():
 
                 if pairs[query_name][1]:                                        
                     f_obj.write(pairs[query_name][1])
+        
+        if 'N' in snp_lst:
+            no_match_counter += 1
+
+            if 'no_match' in mode:                        
+                f_obj.write(record)
 
 
     
     print('''
     Done.
     {} phase changes reads from {} total unpaired ({}%)
-    {} phase changes reads across mate pairs from {} total paired ({}%)
+    {} phase changes reads across mate pairs from {} total read pairs ({}%)
     {} reads had no-match variants.
     {} reads did not have enough SNPs (> 0) to call ({}%)
     '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
@@ -273,11 +275,14 @@ def matepairs_recomb():
             needs_header = False	
         with open(log, 'a') as f:	
             if needs_header:	
-                fieldnames = ['phase_change_reads', 'total_reads',	
-                'no_match_reads', 'phase_change_across_mate_pairs',	
-                'no_snp_reads']	
-                out_values = [phase_change_counter, all_seq_counter, no_match_counter,	
-                        phase_change_mate_pair_counter, all_seq_counter - seq_with_snps_counter]	
+                fieldnames = ['phase_change_reads', 'unpaired_reads',	
+                'phase_change_across_mate_pairs', 'read_pairs',
+                'no_match_reads'	
+                'no_snp_reads', 'total_reads']	
+                out_values = [phase_change_counter, unpaired, 
+                        phase_change_mate_pair_counter, paired,	
+                        no_match_counter, 
+                        all_seq_counter - seq_with_snps_counter, all_seq_counter]	
                 f.write(','.join(fieldnames) + '\n')	
                 f.write(','.join([str(n) for n in out_values]) + '\n')
 
