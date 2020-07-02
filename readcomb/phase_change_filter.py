@@ -1,6 +1,8 @@
 import os
 import argparse
 import pysam
+import time
+import datetime
 from cyvcf2 import VCF
 from tqdm import tqdm
 
@@ -214,6 +216,9 @@ def matepairs_recomb():
     
     # get mate pairs
     pairs, paired, unpaired = cache_pairs(bam_file_obj)
+
+    # start timer
+    start = time.time()
     
     for query_name in tqdm(pairs):
 
@@ -255,7 +260,9 @@ def matepairs_recomb():
             if 'no_match' in mode:                        
                 f_obj.write(record)
 
-
+    # end timer
+    end = time.time()
+    runtime = str(datetime.timedelta(seconds=round(end - start)))
     
     print('''
     Done.
@@ -263,10 +270,12 @@ def matepairs_recomb():
     {} phase changes reads across mate pairs from {} total read pairs ({}%)
     {} reads had no-match variants.
     {} reads did not have enough SNPs (> 0) to call ({}%)
+    time taken: {}
     '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
         phase_change_mate_pair_counter, paired, round(phase_change_mate_pair_counter / paired * 100, 2),
         no_match_counter, all_seq_counter - seq_with_snps_counter,
-        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter * 100, 2))
+        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter * 100, 2),
+        runtime)
     )
 
     if log:
@@ -278,11 +287,13 @@ def matepairs_recomb():
                 fieldnames = ['phase_change_reads', 'unpaired_reads',	
                 'phase_change_across_mate_pairs', 'read_pairs',
                 'no_match_reads'	
-                'no_snp_reads', 'total_reads']	
+                'no_snp_reads', 'total_reads',
+                'time_taken']	
                 out_values = [phase_change_counter, unpaired, 
                         phase_change_mate_pair_counter, paired,	
                         no_match_counter, 
-                        all_seq_counter - seq_with_snps_counter, all_seq_counter]	
+                        all_seq_counter - seq_with_snps_counter, all_seq_counter,
+                        runtime]	
                 f.write(','.join(fieldnames) + '\n')	
                 f.write(','.join([str(n) for n in out_values]) + '\n')
 
