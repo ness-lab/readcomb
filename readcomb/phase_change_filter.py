@@ -12,23 +12,26 @@ def args():
         usage='python3.5 phase_change_filter.py [options]')
 
     parser.add_argument('-b', '--bam', required=True,
-                        type=str, help='BAM to filter')
+                        type=str, help='BAM to filter, required')
                         
     parser.add_argument('-v', '--vcf', required=True,
-                        type=str, help='VCF containing parents')
+                        type=str, help='VCF containing parents, required')
+
+    parser.add_argument('-c', '--chrom', required=False,
+                        type=str, default='all', help='Specify which chromsome sequences to run, default is all')
 
     parser.add_argument('-m', '--mode', required=False,
-                        type=str, default='phase_change', help='Mode to execute the program')
+                        type=str, default='phase_change', help='Mode to execute the program, default is phase_change')
 
     parser.add_argument('-l', '--log', required=False,
-                        type=str, help='Log metrics to provide filename')
+                        type=str, help='Log metrics to provide filename, default is False')
 
     parser.add_argument('-o', '--out', required=False,
-                        type=str, default='recomb_diagnosis', help='File to write to')
+                        type=str, default='recomb_diagnosis', help='File to write to, default is recomb_diagnosis')
 
     args = parser.parse_args()
 
-    return args.bam, args.vcf, args.mode, args.log, args.out
+    return args.bam, args.vcf, args.chrom, args.mode, args.log, args.out
 
 def check_snps(f_name, chromosome, left_bound, right_bound):
     '''
@@ -48,11 +51,12 @@ def check_snps(f_name, chromosome, left_bound, right_bound):
     return records
 
 
-def cache_pairs(bam_file_obj):
+def cache_pairs(bam_file_obj, chromosome):
     '''
     Iterates through a bam file to find mate pairs and cache them together in a dictionary
 
     bam_file_obj: pysam alignment file object
+    chromosome: string
 
     Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
     records as the value. If there is no mate pair, the second object in the tuple is None.    
@@ -60,13 +64,23 @@ def cache_pairs(bam_file_obj):
     Also returns the number of unpaired reads (unpaired) and the number of mate pairs (paired)
     '''
     
+    print('Caching reads for ' + chromosome + ' sequences')
+
     cache = {}
     
     paired = 0
     unpaired = 0
     
     for record in bam_file_obj:
-        name = record.query_name
+        
+        # error checking
+        if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
+            continue
+        
+        if chromosome != record.reference_name and chromosome != 'all':
+            continue 
+
+        name = record.query_name + record.reference_name
         
         if name not in cache:
             cache[name] = [record,None]
@@ -76,7 +90,6 @@ def cache_pairs(bam_file_obj):
             paired += 1
             unpaired -= 1
             
-    print('Paired: {paired}, Unpaired: {unpaired}'.format(paired=paired, unpaired=unpaired))    
     return cache, paired, unpaired
         
     
@@ -156,7 +169,7 @@ def phase_detection(snps, segment, record):
 
         start = snp.start - record.reference_start
 
-        # extra calculations to realign start if there is an insertion or deletion
+        # extra calculations to realign start if there is an insertion
         current_tuple = 0
         current_base = 0
 
@@ -200,8 +213,11 @@ def matepairs_recomb():
         no_match - only write to output bam records that have a base that does not match either variation of a SNP
     log - boolean: when true, logs sequence counts to a log file
     output_filename - string: file to write the filtered bams to, by default the function writes to recomb_diagnosis.sam
-    '''
-    bam, vcf, mode, log, output_filename = args()
+    '''    
+    # start timer
+    start = time.time()
+
+    bam, vcf, chromosome, mode, log, output_filename = args()
 
     bam_file_obj = pysam.AlignmentFile(bam, 'r')
     
@@ -214,11 +230,9 @@ def matepairs_recomb():
     seq_with_snps_counter = 0
     all_seq_counter = 0
     
-    # get mate pairs
-    pairs, paired, unpaired = cache_pairs(bam_file_obj)
+    pairs, paired, unpaired = cache_pairs(bam_file_obj, chromosome)
 
-    # start timer
-    start = time.time()
+    print('Beginning phase change analysis')
     
     for query_name in tqdm(pairs):
 
