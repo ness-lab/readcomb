@@ -3,6 +3,7 @@ readcomb/test.py
 tests/mock.sam
 tests/mock.vcf.gz
 tests/mock.vcf.gz.tbi
+tests/data
 readcomb/recomb_diagnosis.txt
 .ipynb_checkpoints
 readcomb/test.ipynb
