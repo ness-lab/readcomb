@@ -33,21 +33,23 @@ def args():
 
     return args.bam, args.vcf, args.chrom, args.mode, args.log, args.out
 
-def check_snps(f_name, chromosome, left_bound, right_bound):
+def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     '''
     Generate all SNPs on given chromsome and VCF file within the left_bound and right_bound using cyvcf2
     
-    f_name - string: filepath of a VCF file
+    vcf_file_obj - cyvcf2 VCF file object
     chromsome - string: chromosome name
     left_bound/right_bound - integer: 0-based index of reference sequence
 
     Return list of cyvcf Variant objects
     '''
-    vcf_in = VCF(f_name)
+
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
-    records = [rec for rec in vcf_in(region)]
+
+    # list comp with if statement to only include SNPs
+    records = [rec for rec in vcf_file_obj(region) if len(rec.REF) == 1 and len(rec.ALT) == 1]
     return records
 
 
@@ -74,11 +76,16 @@ def cache_pairs(bam_file_obj, chromosome):
     for record in bam_file_obj:
         
         # error checking
-        if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
+        if record.is_secondary or record.is_supplementary:
             continue
         
+        # chromosome argument checking
         if chromosome != record.reference_name and chromosome != 'all':
             continue 
+
+        # check if query_name and reference_name exist
+        if record.query_name == None or record.reference_name ==  None:
+            continue
 
         name = record.query_name + record.reference_name
         
@@ -90,6 +97,7 @@ def cache_pairs(bam_file_obj, chromosome):
             paired += 1
             unpaired -= 1
             
+    print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
     return cache, paired, unpaired
         
     
@@ -220,6 +228,8 @@ def matepairs_recomb():
     bam, vcf, chromosome, mode, log, output_filename = args()
 
     bam_file_obj = pysam.AlignmentFile(bam, 'r')
+
+    vcf_file_obj = VCF(vcf)
     
     f_obj = pysam.AlignmentFile(output_filename + '.sam', 'wh', template=bam_file_obj)
     
@@ -244,7 +254,7 @@ def matepairs_recomb():
                 # analyze cigar string
                 segment = cigar(record)
                             
-                snps = check_snps(vcf, record.reference_name, 
+                snps = check_snps(vcf_file_obj, record.reference_name, 
                                 record.reference_start,
                                 record.reference_start + record.query_alignment_length)
                 
