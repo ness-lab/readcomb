@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import pysam   
 import collections
@@ -19,6 +18,9 @@ def args():
     
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents')
+
+    parser.add_argument('-c', '--chrom', required=False,
+                        type=str, default='all', help='Specify which chromsome sequences to run, default is all')
     
     parser.add_argument('-r', '--reference', required=True,
                         type=str, help='FASTA reference file to align bam reads to')
@@ -34,7 +36,7 @@ def args():
 
     args = parser.parse_args()
 
-    return args.bam, args.vcf, args.reference, args.mode, args.log, args.out
+    return args.bam, args.vcf, args.chrom, args.reference, args.mode, args.log, args.out
 
 def human_cigar(record, ref):
     '''
@@ -185,7 +187,7 @@ def human_read_matepairs_recomb():
         Reference: reference_files_path + 'chlamy.5.3.w_organelles_mtMinus.fasta'
     '''
     
-    bam, vcf, reference, mode, log, output_filename = args()
+    bam, vcf, chromosome, reference, mode, log, output_filename = args()
 
     # create bam pysam alignment file object
     bam_file_obj = pysam.AlignmentFile(bam, 'r')
@@ -209,7 +211,7 @@ def human_read_matepairs_recomb():
     all_seq_counter = 0
     
     # get mate pairs
-    pairs, paired, unpaired = cache_pairs(bam_file_obj)
+    pairs, paired, unpaired = cache_pairs(bam_file_obj, chromosome)
     
     for query_name in pairs:
         
