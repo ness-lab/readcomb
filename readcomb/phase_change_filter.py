@@ -46,10 +46,10 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
 
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
-    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
+    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)\
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region) if len(rec.REF) == 1 and len(rec.ALT) == 1]
+    records = [rec for rec in vcf_file_obj(region) if rec.is_snp]
     return records
 
 
@@ -94,7 +94,7 @@ def cache_pairs(bam_file_obj, chromosome):
             unpaired += 1
         else:
             cache[name][1] = record
-            paired += 1
+            paired += 2
             unpaired -= 1
             
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
