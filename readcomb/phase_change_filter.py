@@ -312,14 +312,14 @@ def matepairs_recomb():
                 'phase_change_across_mate_pairs', 'read_pairs',
                 'no_match_reads'	
                 'no_snp_reads', 'total_reads',
-                'time_taken']	
-                out_values = [phase_change_counter, unpaired, 
-                        phase_change_mate_pair_counter, paired,	
-                        no_match_counter, 
-                        all_seq_counter - seq_with_snps_counter, all_seq_counter,
-                        runtime]	
-                f.write(','.join(fieldnames) + '\n')	
-                f.write(','.join([str(n) for n in out_values]) + '\n')
+                'time_taken']
+                f.write(','.join(fieldnames) + '\n')		
+            out_values = [phase_change_counter, unpaired, 
+                    phase_change_mate_pair_counter, paired,	
+                    no_match_counter, 
+                    all_seq_counter - seq_with_snps_counter, all_seq_counter,
+                    runtime]	
+            f.write(','.join([str(n) for n in out_values]) + '\n')
 
 
 if __name__ == '__main__':
