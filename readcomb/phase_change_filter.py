@@ -49,7 +49,7 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)\
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region) if rec.is_snp]
+    records = [rec for rec in vcf_file_obj(region) if rec.is_snp and len(rec.ALT) > 0]
     return records
 
 
