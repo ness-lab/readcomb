@@ -6,7 +6,7 @@ import datetime
 from cyvcf2 import VCF
 from tqdm import tqdm
 
-def args():
+def arg_parser():
     parser = argparse.ArgumentParser(
         description='filter BAM for reads containing phase changes', 
         usage='python3.5 phase_change_filter.py [options]')
@@ -17,6 +17,9 @@ def args():
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents, required')
 
+    parser.add_argument('-t', '--threads', required=False,
+                        type=int, default=1, help='Number of threads to run readcomb filter on, default is 1')
+
     parser.add_argument('-c', '--chrom', required=False,
                         type=str, default='all', help='Specify which chromsome sequences to run, default is all')
 
@@ -24,14 +27,20 @@ def args():
                         type=str, default='phase_change', help='Mode to execute the program, default is phase_change')
 
     parser.add_argument('-l', '--log', required=False,
-                        type=str, help='Log metrics to provide filename, default is False')
+                        type=bool, help='Log metrics to provide filename, default is False')
 
     parser.add_argument('-o', '--out', required=False,
                         type=str, default='recomb_diagnosis', help='File to write to, default is recomb_diagnosis')
 
     args = parser.parse_args()
 
-    return args.bam, args.vcf, args.chrom, args.mode, args.log, args.out
+    return {"bam": args.bam,
+            "vcf": args.vcf,
+            "threads": args.threads,
+            "chrom": args.chrom,
+            "mode": args.mode,
+            "log": args.log,
+            "out": args.out,}
 
 def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     '''
@@ -225,31 +234,34 @@ def matepairs_recomb():
     # start timer
     start = time.time()
 
-    bam, vcf, chromosome, mode, log, output_filename = args()
+    # dictionary of arguements
+    args = arg_parser()
 
-    bam_file_obj = pysam.AlignmentFile(bam, 'r')
+    # pysam alignment file object
+    bam_file_obj = pysam.AlignmentFile(args["bam"], 'r')
 
-    vcf_file_obj = VCF(vcf)
+    # cyvcf2 VCF file object
+    vcf_file_obj = VCF(args["vcf"])
     
-    f_obj = pysam.AlignmentFile(output_filename + '.sam', 'wh', template=bam_file_obj)
+    # pysam alignment file with input bam as filter
+    f_obj = pysam.AlignmentFile(args["out"] + '.sam', 'wh', template=bam_file_obj)
     
     #counters
-    no_match_counter = 0
-    phase_change_counter = 0
-    phase_change_mate_pair_counter = 0
-    seq_with_snps_counter = 0
-    all_seq_counter = 0
+    counters = {"no_match": 0,
+                "phase_change": 0,
+                "phase_change_mate_pair": 0,
+                "seq_with_snps": 0,
+                "seq": 0}
     
-    pairs, paired, unpaired = cache_pairs(bam_file_obj, chromosome)
+    pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args["chrom"])
 
     print('Beginning phase change analysis')
     
     for query_name in tqdm(pairs):
-
         snp_lst = []
         for record in pairs[query_name]:
             if record:
-                all_seq_counter += 1
+                counters["seq"] += 1
                 
                 # analyze cigar string
                 segment = cigar(record)
@@ -261,27 +273,27 @@ def matepairs_recomb():
                 snp_lst += phase_detection(snps, segment, record)
 
                 if len(snps) > 0:
-                    seq_with_snps_counter += 1
+                    counters["seq_with_snps"] += 1
             
                 
 
         if '1' in snp_lst and '2' in snp_lst:
             
             if pairs[query_name][1]:
-                phase_change_mate_pair_counter += 1
+                counters["phase_change_mate_pair"] += 1
             else:
-                phase_change_counter += 1
+                counters["phase_change"] += 1
 
-            if 'phase_change' in mode:                   
+            if 'phase_change' in args["mode"]:                   
                 f_obj.write(pairs[query_name][0])
 
                 if pairs[query_name][1]:                                        
                     f_obj.write(pairs[query_name][1])
         
         if 'N' in snp_lst:
-            no_match_counter += 1
+            counters["no_match"] += 1
 
-            if 'no_match' in mode:                        
+            if 'no_match' in args["mode"]:                        
                 f_obj.write(record)
 
     # end timer
@@ -295,29 +307,29 @@ def matepairs_recomb():
     {} reads had no-match variants.
     {} reads did not have enough SNPs (> 0) to call ({}%)
     time taken: {}
-    '''.format(phase_change_counter, unpaired, round(phase_change_counter / unpaired * 100, 2), 
-        phase_change_mate_pair_counter, paired, round(phase_change_mate_pair_counter / paired * 100, 2),
-        no_match_counter, all_seq_counter - seq_with_snps_counter,
-        round((all_seq_counter - seq_with_snps_counter) / all_seq_counter * 100, 2),
+    '''.format(counters["phase_change"], counters["unpaired"], round(counters["phase_change"] / counters["unpaired"] * 100, 2), 
+        counters["phase_change_mate_pair"], counters["paired"], round(counters["phase_change_mate_pair"] / counters["paired"] * 100, 2),
+        counters["no_match"], counters["seq"] - counters["seq_with_snps"],
+        round((counters["seq"] - counters["seq_with_snps"]) / counters["seq"] * 100, 2),
         runtime)
     )
 
-    if log:
+    if args["log"]:
         needs_header = True
         if os.path.isfile(log):	
             needs_header = False	
         with open(log, 'a') as f:	
             if needs_header:	
                 fieldnames = ['phase_change_reads', 'unpaired_reads',	
-                'phase_change_across_mate_pairs', 'read_pairs',
+                'phase_change_across_mate_pair', 'read_pairs',
                 'no_match_reads'	
                 'no_snp_reads', 'total_reads',
                 'time_taken']
                 f.write(','.join(fieldnames) + '\n')		
-            out_values = [phase_change_counter, unpaired, 
-                    phase_change_mate_pair_counter, paired,	
-                    no_match_counter, 
-                    all_seq_counter - seq_with_snps_counter, all_seq_counter,
+            out_values = [counters["phase_change"], counters["unpaired"], 
+                    counters["phase_change_mate_pair"], counters["paired"],	
+                    counters["no_match"], 
+                    counters["seq"] - counters["seq_with_snps"], counters["seq"],
                     runtime]	
             f.write(','.join([str(n) for n in out_values]) + '\n')
 
