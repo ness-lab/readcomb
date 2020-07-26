@@ -3,6 +3,8 @@ import argparse
 import pysam
 import time
 import datetime
+import threading
+import itertools
 from cyvcf2 import VCF
 from tqdm import tqdm
 
@@ -27,7 +29,7 @@ def arg_parser():
                         type=str, default='phase_change', help='Mode to execute the program, default is phase_change')
 
     parser.add_argument('-l', '--log', required=False,
-                        type=bool, help='Log metrics to provide filename, default is False')
+                        type=str, help='Log metrics to provide filename, default is False')
 
     parser.add_argument('-o', '--out', required=False,
                         type=str, default='recomb_diagnosis', help='File to write to, default is recomb_diagnosis')
@@ -135,29 +137,29 @@ def cigar(record):
 
     for cigar_tuple in cigar_tuples:
       
-        # 1 is an insertion to query segment, skip it because SNPs are aligned to reference and do not exist in this region
-        # 4 is soft clipping, query sequence includes this but is not aligned to reference
-        if cigar_tuple[0] == 4:
+        # 0 is a match, add it onto the segment 
+        if cigar_tuple[0] == 0:
+            segment.append(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
 
+        # 1 is an insertion to query segment, skip it because SNPs are aligned to reference and do not exist in this region
         elif cigar_tuple[0] == 1:
             segment.append(query_segment[index:index+cigar_tuple[1]])
+            index += cigar_tuple[1]               
+            
+        # 2 is an deletion to query segment, add a gap to realign it to reference
+        # don't add index to not moving further through the query segment
+        elif cigar_tuple[0] == 2:
+            segment.append('-' * cigar_tuple[1])
+
+        # 4 is soft clipping, query sequence includes this but is not aligned to reference
+        elif cigar_tuple[0] == 4:
             index += cigar_tuple[1]
 
         # 5 = hard clipping, record.query_sequence does not have the portion that is
         # hard clipping so skip it and don't add anything
         elif cigar_tuple[0] == 5:
             continue
-
-        # 0 is a match, add it onto the segment 
-        elif cigar_tuple[0] == 0:
-            segment.append(query_segment[index:index+cigar_tuple[1]])
-            index += cigar_tuple[1]
-            
-        # 2 is an deletion to query segment, add a gap to realign it to reference
-        # don't add index to not moving further through the query segment
-        elif cigar_tuple[0] == 2:
-            segment.append('-' * cigar_tuple[1])
 
         else:
             raise Exception('No condition for tuple ' + str(cigar_tuples.index(cigar_tuple)) + ' of ' + str(cigar_tuples))
@@ -218,6 +220,60 @@ def phase_detection(snps, segment, record):
 
     return snp_lst
 
+class matepairs_thread(threading.Thread):
+    def __init__(self, counters, args, pairs, index):
+        threading.Thread.__init__(self)
+        self.counters = counters
+        self.args = args
+        # cyvcf2 VCF file reader
+        self.vcf_file_obj = VCF(args["vcf"])
+        self.pairs = pairs
+        self.index = index
+
+        self.filtered_pairs = {}
+
+    def run(self):
+        
+        # self.pairs is a list of dictionaries and we use self.index to get the 
+        # subset of cached pairs assigned to this thread
+        for query_name in tqdm(self.pairs[self.index]):
+            snp_lst = []
+            pair = self.pairs[self.index][query_name]
+            for record in pair:
+                if record:
+                    self.counters["seq"] += 1
+                    
+                    segment = cigar(record)
+                                
+                    snps = check_snps(self.vcf_file_obj, record.reference_name, 
+                                    record.reference_start,
+                                    record.reference_start + record.query_alignment_length)
+                    
+                    snp_lst += phase_detection(snps, segment, record)
+
+                    if len(snps) > 0:
+                        self.counters["seq_with_snps"] += 1
+                
+                    
+
+            if '1' in snp_lst and '2' in snp_lst:
+                
+                if pair[1]:
+                    self.counters["phase_change_mate_pair"] += 1
+                else:
+                    self.counters["phase_change"] += 1
+
+                if 'phase_change' in self.args["mode"]:                   
+                    self.filtered_pairs[query_name] = pair
+            
+            if 'N' in snp_lst:
+                self.counters["no_match"] += 1
+
+                if 'no_match' in self.args["mode"]:                        
+                    self.filtered_pairs[query_name] = pair
+
+        self.pairs[self.index] = self.filtered_pairs
+
 def matepairs_recomb():
 
     '''
@@ -239,9 +295,6 @@ def matepairs_recomb():
 
     # pysam alignment file object
     bam_file_obj = pysam.AlignmentFile(args["bam"], 'r')
-
-    # cyvcf2 VCF file object
-    vcf_file_obj = VCF(args["vcf"])
     
     # pysam alignment file with input bam as filter
     f_obj = pysam.AlignmentFile(args["out"] + '.sam', 'wh', template=bam_file_obj)
@@ -256,45 +309,37 @@ def matepairs_recomb():
     pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args["chrom"])
 
     print('Beginning phase change analysis')
+
+    split_pairs = []
+    split_index = len(pairs) // args["threads"]
+    pairs_iter = iter(pairs.items())
+
+    threads = []
+
     
-    for query_name in tqdm(pairs):
-        snp_lst = []
-        for record in pairs[query_name]:
-            if record:
-                counters["seq"] += 1
-                
-                # analyze cigar string
-                segment = cigar(record)
-                            
-                snps = check_snps(vcf_file_obj, record.reference_name, 
-                                record.reference_start,
-                                record.reference_start + record.query_alignment_length)
-                
-                snp_lst += phase_detection(snps, segment, record)
+    for thread_index in range(args["threads"]):
+        # split pairs dictionary into multiple dictionaries and store them in the list split_pairs to be used by threads
+        if thread_index < args["threads"] - 1:
+            split_pairs.append(dict(itertools.islice(pairs_iter, split_index)))
+        else:
+            split_pairs.append(dict(pairs_iter))
 
-                if len(snps) > 0:
-                    counters["seq_with_snps"] += 1
-            
-                
+        # initiate and start threads
+        threads.append(matepairs_thread(counters, args, split_pairs, thread_index))
+        threads[thread_index].start()
 
-        if '1' in snp_lst and '2' in snp_lst:
-            
+    # end threads
+    for thread in threads:
+        thread.join()
+
+    # write filtered data onto output sam file
+    for pairs in split_pairs:
+        for query_name in pairs:
+            f_obj.write(pairs[query_name][0])
+
             if pairs[query_name][1]:
-                counters["phase_change_mate_pair"] += 1
-            else:
-                counters["phase_change"] += 1
-
-            if 'phase_change' in args["mode"]:                   
                 f_obj.write(pairs[query_name][0])
 
-                if pairs[query_name][1]:                                        
-                    f_obj.write(pairs[query_name][1])
-        
-        if 'N' in snp_lst:
-            counters["no_match"] += 1
-
-            if 'no_match' in args["mode"]:                        
-                f_obj.write(record)
 
     # end timer
     end = time.time()
