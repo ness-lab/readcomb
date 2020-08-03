@@ -23,34 +23,36 @@ def arg_parser():
                         type=int, default=1, help='Number of threads to run readcomb filter on, default is 1')
 
     parser.add_argument('-c', '--chrom', required=False,
-                        type=str, default='all', help='Specify which chromsome sequences to run, default is all')
+                        type=str, default='all', help='Specify which chromsome sequences in the bam file to run, default is all')
 
     parser.add_argument('-m', '--mode', required=False,
-                        type=str, default='phase_change', help='Mode to execute the program, default is phase_change')
+                        type=str, default='phase_change', help='Mode to execute the program, default is phase_change, other modes include no_match and all')
 
     parser.add_argument('-l', '--log', required=False,
-                        type=str, help='Log metrics to provide filename, default is False')
+                        type=str, help='Filename for log metric output, default is False')
 
     parser.add_argument('-o', '--out', required=False,
-                        type=str, default='recomb_diagnosis', help='File to write to, default is recomb_diagnosis')
+                        type=str, default='recomb_diagnosis', help='File to write to, will overwrite existing files, default is recomb_diagnosis')
 
     args = parser.parse_args()
 
-    return {"bam": args.bam,
-            "vcf": args.vcf,
-            "threads": args.threads,
-            "chrom": args.chrom,
-            "mode": args.mode,
-            "log": args.log,
-            "out": args.out,}
+    return {
+        "bam": args.bam,
+        "vcf": args.vcf,
+        "threads": args.threads,
+        "chrom": args.chrom,
+        "mode": args.mode,
+        "log": args.log,
+        "out": args.out
+        }
 
 def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     '''
     Generate all SNPs on given chromsome and VCF file within the left_bound and right_bound using cyvcf2
     
-    vcf_file_obj - cyvcf2 VCF file object
-    chromsome - string: chromosome name
-    left_bound/right_bound - integer: 0-based index of reference sequence
+    vcf_file_obj: cyvcf2 VCF file object
+    chromsome: string: chromosome name
+    left_bound/right_bound: integer: 0-based index of reference sequence
 
     Return list of cyvcf Variant objects
     '''
@@ -71,10 +73,11 @@ def cache_pairs(bam_file_obj, chromosome):
     bam_file_obj: pysam alignment file object
     chromosome: string
 
-    Returns a dictionary with unique sequence read id as the key and a tuple pair of bam 
-    records as the value. If there is no mate pair, the second object in the tuple is None.    
-
-    Also returns the number of unpaired reads (unpaired) and the number of mate pairs (paired)
+    Returns a dictionary of tuples (cache), the number of unpaired reads (unpaired), 
+    and the number of mate pairs (paired).
+    
+    Cache is a dictionary with a unique sequence read id as the key and a tuple pair of bam 
+    records as the value. If there is no mate pair, the second object in the tuple is None
     '''
     
     print('Caching reads for ' + chromosome + ' sequences')
@@ -97,7 +100,8 @@ def cache_pairs(bam_file_obj, chromosome):
         # check if query_name and reference_name exist
         if record.query_name == None or record.reference_name ==  None:
             continue
-
+        
+        # key is unique combination of query name and the chromosome
         name = record.query_name + record.reference_name
         
         if name not in cache:
@@ -111,16 +115,14 @@ def cache_pairs(bam_file_obj, chromosome):
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
     return cache, paired, unpaired
         
-    
-
 def cigar(record):
     ''' 
     Build the query segment using the cigar tuple given by the bam record so that it aligns with
-    indexes of SNPs in the VCF that are aligned to the reference sequence
+    indexes of SNPs in the VCF and the reference sequence
 
     record: bam record from pysam alignment file
     
-    returns dna sequence string that is built using the bam cigar tuples and query segment
+    Returns a dna sequence string
     '''
     cigar_tuples = record.cigartuples
     
@@ -166,12 +168,17 @@ def cigar(record):
         
     return ''.join(segment)
 
-
 def phase_detection(snps, segment, record):
     '''
-    snps - list of variants: list of snps in the area of the sequence and record given by the function check_snps(),
-        can include snps that are outside of the area
-    segment - string: sequence that is the segment built by the function cigar()
+    Takes a segment and a list in the region of the segment and generates a list of 
+    strings to represent in order the parent of each variant on the segment
+
+    snps: list of cyvcf2 variants in the region of the segment given by the function check_snps(),
+        can include variants that are outside of the region when there is soft clipping
+    segment: string sequence that is the segment built by the function cigar()
+    record: bam record from pysam alignment file
+
+    Returns a list of strings ('1', '2', or 'N')
     '''
     
     snp_lst = []
@@ -185,13 +192,12 @@ def phase_detection(snps, segment, record):
     for snp in snps:
         # Using SNP.start and record.reference_start since they are both 0 based
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
-
         start = snp.start - record.reference_start
 
-        # extra calculations to realign start if there is an insertion
         current_tuple = 0
         current_base = 0
 
+        # extra calculations to realign start if there is an insertion
         while current_base < start and current_tuple < len(cigar_tuples):
             if cigar_tuples[current_tuple][0] == 1:
                 # shift the start to the right by the amount of insertion to compensate for it
@@ -221,21 +227,35 @@ def phase_detection(snps, segment, record):
     return snp_lst
 
 class matepairs_thread(threading.Thread):
+    '''
+    Inherited class from python's threading.Thread module. This class can be called
+    to create a parallel thread that will filter cached bam sequences 
+
+    counters: dictionary of counters shared across all threads
+    args: dictionary of arguements parsed from the command line call of this program
+    pairs: list of dictionaries
+    index: int, the index of a dictionary in pairs assigned to this thread
+
+    The thread does not return anything but rather overwrites the pairs[index] dictionary 
+    ssigned to this thread with the filtered results
+    '''
     def __init__(self, counters, args, pairs, index):
+        # initiate threading.Thread super class
         threading.Thread.__init__(self)
         self.counters = counters
         self.args = args
-        # cyvcf2 VCF file reader
+
+        # cyvcf2 VCF file object creation
         self.vcf_file_obj = VCF(args["vcf"])
+
+        # pairs is a list of dictionaries, self.pairs[self.index] is the dictionary assigned to this thread
         self.pairs = pairs
         self.index = index
 
+        # output dictionary
         self.filtered_pairs = {}
 
-    def run(self):
-        
-        # self.pairs is a list of dictionaries and we use self.index to get the 
-        # subset of cached pairs assigned to this thread
+    def run(self):        
         for query_name in tqdm(self.pairs[self.index]):
             snp_lst = []
             pair = self.pairs[self.index][query_name]
@@ -253,8 +273,6 @@ class matepairs_thread(threading.Thread):
 
                     if len(snps) > 0:
                         self.counters["seq_with_snps"] += 1
-                
-                    
 
             if '1' in snp_lst and '2' in snp_lst:
                 
@@ -275,17 +293,12 @@ class matepairs_thread(threading.Thread):
         self.pairs[self.index] = self.filtered_pairs
 
 def matepairs_recomb():
-
     '''
-    Parses arguements and filters bam records using SNPS from a vcf
+    Main function of phase_change_filter.py
 
-    bam - string: bam filepath
-    vcf - string: vcf filepath
-    mode - string:
-        phase_change - only write to output bam records that have phase changes
-        no_match - only write to output bam records that have a base that does not match either variation of a SNP
-    log - boolean: when true, logs sequence counts to a log file
-    output_filename - string: file to write the filtered bams to, by default the function writes to recomb_diagnosis.sam
+    Parses arguements, generates file objects, and creates threads for sequence filtering 
+    then waits for the thread to finish before writing the results to a file and outputing
+    counters to the console and a log file if chosen
     '''    
     # start timer
     start = time.time()
@@ -311,7 +324,7 @@ def matepairs_recomb():
     print('Beginning phase change analysis')
 
     split_pairs = []
-    split_index = len(pairs) // args["threads"]
+    split_index = max(len(pairs) // args["threads"], 1)
     pairs_iter = iter(pairs.items())
 
     threads = []
