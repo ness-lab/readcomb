@@ -219,7 +219,7 @@ def phase_detection(snps, segment, record):
             current_tuple += 1
 
         if start < 0:
-            raise Exception('VCF indexing is off. Check SNP at {}'.format(snp))
+            raise ValueError('VCF indexing is off. Check SNP at {}'.format(snp))
 
         strand1 = snp.gt_bases[0][0]
         strand2 = snp.gt_bases[1][0]
