@@ -39,7 +39,7 @@ def arg_parser():
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Filename for log metric output [optional]')
 
-    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
+    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis.sam',
                         help='File to write to (default recomb_diagnosis)')
 
     args = parser.parse_args()
@@ -116,10 +116,13 @@ def cache_pairs(bam_file_obj, chromosome):
         if name not in cache:
             cache[name] = [record, None]
             unpaired += 1
-        else:
+        elif cache[name][1] is None:
             cache[name][1] = record
             paired += 2
             unpaired -= 1
+        else:
+            raise ValueError('More than 2 sequences for mate pairs ' + record.query_name \
+                              + ' in chromosome ' + record.reference_name)
 
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
     return cache, paired, unpaired
@@ -323,7 +326,7 @@ def matepairs_recomb():
     bam_file_obj = pysam.AlignmentFile(args["bam"], 'r')
 
     # pysam alignment file with input bam as filter
-    f_obj = pysam.AlignmentFile(args["out"] + '.sam', 'wh', template=bam_file_obj)
+    f_obj = pysam.AlignmentFile(args["out"], 'wh', template=bam_file_obj)
 
     #counters
     counters = {"no_match": 0,
@@ -364,7 +367,7 @@ def matepairs_recomb():
             f_obj.write(pairs[query_name][0])
 
             if pairs[query_name][1]:
-                f_obj.write(pairs[query_name][0])
+                f_obj.write(pairs[query_name][1])
 
 
     # end timer
