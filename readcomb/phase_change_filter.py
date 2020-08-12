@@ -98,11 +98,15 @@ def cache_pairs(bam_file_obj, chromosome):
 
     for record in bam_file_obj:
 
-        # error checking
+        # filter out the read if it is in a improper read
+        if record.is_pair and not record.is_proper_pair:
+            continue
+
+        # filter on the read if it is a secondary or supplementary mate pair
         if record.is_secondary or record.is_supplementary:
             continue
 
-        # chromosome argument checking
+        # filter out read if it isn't the chromosome specified in arguement
         if chromosome != record.reference_name and chromosome != 'all':
             continue
 
