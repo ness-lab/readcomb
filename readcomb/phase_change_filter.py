@@ -59,8 +59,12 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     Generate all SNPs on given chromosome and VCF file within the
     left_bound and right_bound using cyvcf2
 
+    SNPs must have all calls with GQ >= 30 and no heterozygous calls.
+    (The heterozygous calls filter might need to be revisited for compatibility
+    with diploid species)
+
     vcf_file_obj: cyvcf2 VCF file object
-    chromsome: string: chromosome name
+    chromosome: string: chromosome name
     left_bound/right_bound: integer: 0-based index of reference sequence
 
     Return list of cyvcf Variant objects
@@ -71,7 +75,9 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)\
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region) if rec.is_snp and len(rec.ALT) > 0]
+    records = [rec for rec in vcf_file_obj(region) if rec.is_snp and len(rec.ALT) > 0 
+               and rec.num_het == 0 and all(rec.gt_quals >= 30)
+               and rec.gt_bases[0] != rec.gt_bases[1]]
     return records
 
 
@@ -211,33 +217,33 @@ def phase_detection(snps, segment, record):
     for snp in snps:
         # Using SNP.start and record.reference_start since they are both 0 based
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
-        start = snp.start - record.reference_start
+        idx = snp.start - record.reference_start
 
         current_tuple = 0
         current_base = 0
 
         # extra calculations to realign start if there is an insertion
-        while current_base < start and current_tuple < len(cigar_tuples):
+        while current_base < idx and current_tuple < len(cigar_tuples):
             if cigar_tuples[current_tuple][0] == 1:
-                # shift the start to the right by the amount of insertion to compensate for it
-                start += cigar_tuples[current_tuple][1]
+                # shift the index to the right by the amount of insertion to compensate for it
+                idx += cigar_tuples[current_tuple][1]
 
             current_base += cigar_tuples[current_tuple][1]
             current_tuple += 1
 
-        if start < 0:
+        if idx < 0:
             raise ValueError('VCF indexing is off. Check SNP at {}'.format(snp))
 
-        strand1 = snp.gt_bases[0][0]
-        strand2 = snp.gt_bases[1][0]
+        parent1 = snp.gt_bases[0][0]
+        parent2 = snp.gt_bases[1][0]
 
-        if start >= len(segment):
+        if idx >= len(segment):
             break
 
-        if segment[start] == strand1:
+        if segment[idx] == parent1:
             snp_lst.append('1')
 
-        elif segment[start] == strand2:
+        elif segment[idx] == parent2:
             snp_lst.append('2')
 
         else:
