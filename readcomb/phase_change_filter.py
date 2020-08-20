@@ -42,6 +42,9 @@ def arg_parser():
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis.sam',
                         help='File to write to (default recomb_diagnosis)')
 
+    parser.add_argument('-i', '--improper', action='store_true',
+                        help='Include unpaired/improper reads in filter results')
+
     args = parser.parse_args()
 
     return {
@@ -51,7 +54,8 @@ def arg_parser():
         "chrom": args.chrom,
         "mode": args.mode,
         "log": args.log,
-        "out": args.out
+        "out": args.out,
+        "improper": args.improper,
         }
 
 def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
@@ -72,7 +76,7 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
 
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
-    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)\
+    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
 
     # list comp with if statement to only include SNPs
     records = [rec for rec in vcf_file_obj(region) if rec.is_snp and len(rec.ALT) > 0 
@@ -81,7 +85,7 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     return records
 
 
-def cache_pairs(bam_file_obj, chromosome):
+def cache_pairs(bam_file_obj, args):
     """
     Iterates through a bam file to find mate pairs and cache them together in a dictionary
 
@@ -95,7 +99,7 @@ def cache_pairs(bam_file_obj, chromosome):
     records as the value. If there is no mate pair, the second object in the tuple is None
     """
 
-    print('Caching reads for ' + chromosome + ' sequences')
+    print('Caching reads for ' + args['chrom'] + ' sequences')
 
     cache = {}
 
@@ -104,8 +108,9 @@ def cache_pairs(bam_file_obj, chromosome):
 
     for record in bam_file_obj:
 
-        # filter out the read if it is in a improper read
-        if record.is_pair and not record.is_proper_pair:
+        # filter out the read if it is in a improper read 
+        # unless specified not to in arguement
+        if not record.is_proper_pair and not args['improper']:
             continue
 
         # filter on the read if it is a secondary or supplementary mate pair
@@ -113,7 +118,7 @@ def cache_pairs(bam_file_obj, chromosome):
             continue
 
         # filter out read if it isn't the chromosome specified in arguement
-        if chromosome != record.reference_name and chromosome != 'all':
+        if args['chrom'] != record.reference_name and args['chrom'] != 'all':
             continue
 
         # check if query_name and reference_name exist
@@ -169,7 +174,6 @@ def cigar(record):
         # 1 is an insertion to query segment
         # skip it because SNPs are aligned to reference and do not exist in this region
         elif cigar_tuple[0] == 1:
-            segment.append(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
 
         # 2 is an deletion to query segment, add a gap to realign it to reference
@@ -221,15 +225,6 @@ def phase_detection(snps, segment, record):
 
         current_tuple = 0
         current_base = 0
-
-        # extra calculations to realign start if there is an insertion
-        while current_base < idx and current_tuple < len(cigar_tuples):
-            if cigar_tuples[current_tuple][0] == 1:
-                # shift the index to the right by the amount of insertion to compensate for it
-                idx += cigar_tuples[current_tuple][1]
-
-            current_base += cigar_tuples[current_tuple][1]
-            current_tuple += 1
 
         if idx < 0:
             raise ValueError('VCF indexing is off. Check SNP at {}'.format(snp))
@@ -345,7 +340,7 @@ def matepairs_recomb():
                 "seq_with_snps": 0,
                 "seq": 0}
 
-    pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args["chrom"])
+    pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args)
 
     print('Beginning phase change analysis')
 
@@ -386,17 +381,14 @@ def matepairs_recomb():
 
     print('''
     Done.
-    {} phase changes reads from {} total unpaired ({}%)
-    {} phase changes reads across mate pairs from {} total read pairs ({}%)
+    {} phase changes reads from {} total unpaired
+    {} phase changes reads across mate pairs from {} total read pairs
     {} reads had no-match variants.
-    {} reads did not have enough SNPs (> 0) to call ({}%)
+    {} reads did not have enough SNPs (> 0) to call
     time taken: {}
     '''.format(counters["phase_change"], counters["unpaired"],
-               round(counters["phase_change"] / counters["unpaired"] * 100, 2),
                counters["phase_change_mate_pair"], counters["paired"],
-               round(counters["phase_change_mate_pair"] / counters["paired"] * 100, 2),
                counters["no_match"], counters["seq"] - counters["seq_with_snps"],
-               round((counters["seq"] - counters["seq_with_snps"]) / counters["seq"] * 100, 2),
                runtime)
          )
 
