@@ -113,7 +113,7 @@ def cache_pairs(bam_file_obj, args):
         if not record.is_proper_pair and not args['improper']:
             continue
 
-        # filter on the read if it is a secondary or supplementary mate pair
+        # filter out the read if it is a secondary or supplementary mate pair
         if record.is_secondary or record.is_supplementary:
             continue
 
@@ -138,6 +138,16 @@ def cache_pairs(bam_file_obj, args):
         else:
             raise ValueError('More than 2 sequences for mate pairs ' + record.query_name \
                               + ' in chromosome ' + record.reference_name)
+    
+    # when the improper arguement is not true, remove records that could
+    # not be cached in a pair, these are labeled proper pairs by the bam
+    # but their mate is on another chromosome from an alignment error
+    if not args['improper']:
+        unpaired = 0
+        for query_name, records in list(cache.items()):
+            if records[1] == None:
+                del cache[query_name]
+
 
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
     return cache, paired, unpaired
