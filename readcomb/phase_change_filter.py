@@ -144,9 +144,7 @@ def cache_pairs(bam_file_obj, args):
     # but their mate is on another chromosome from an alignment error
     if not args['improper']:
         unpaired = 0
-        for query_name, records in list(cache.items()):
-            if records[1] == None:
-                del cache[query_name]
+        cache = {query_name: records for query_name, records in list(cache.items()) if records[1] is not None}
 
 
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
@@ -232,9 +230,6 @@ def phase_detection(snps, segment, record):
         # Using SNP.start and record.reference_start since they are both 0 based
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
         idx = snp.start - record.reference_start
-
-        current_tuple = 0
-        current_base = 0
 
         if idx < 0:
             raise ValueError('VCF indexing is off. Check SNP at {}'.format(snp))
