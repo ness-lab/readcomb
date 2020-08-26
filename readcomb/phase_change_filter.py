@@ -99,14 +99,14 @@ def cache_pairs(bam_file_obj, args):
     records as the value. If there is no mate pair, the second object in the tuple is None
     """
 
-    print('Caching reads for ' + args['chrom'] + ' sequences')
+    print('[readcomb] Caching reads for ' + args['chrom'] + ' sequences')
 
     cache = {}
 
     paired = 0
     unpaired = 0
 
-    for record in bam_file_obj:
+    for record in tqdm(bam_file_obj):
 
         # filter out the read if it is in a improper read 
         # unless specified not to in arguement
@@ -137,14 +137,15 @@ def cache_pairs(bam_file_obj, args):
             unpaired -= 1
         else:
             raise ValueError('More than 2 sequences for mate pairs ' + record.query_name \
-                              + ' in chromosome ' + record.reference_name)
+                             + ' in chromosome ' + record.reference_name)
     
     # when the improper arguement is not true, remove records that could
     # not be cached in a pair, these are labeled proper pairs by the bam
     # but their mate is on another chromosome from an alignment error
     if not args['improper']:
         unpaired = 0
-        cache = {query_name: records for query_name, records in list(cache.items()) if records[1] is not None}
+        cache = {query_name: records for query_name, records in list(cache.items()) 
+                 if records[1] is not None}
 
 
     print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
@@ -347,7 +348,7 @@ def matepairs_recomb():
 
     pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args)
 
-    print('Beginning phase change analysis')
+    print('[readcomb] Beginning phase change analysis')
 
     split_pairs = []
     split_index = max(len(pairs) // args["threads"], 1)
@@ -384,18 +385,16 @@ def matepairs_recomb():
     end = time.time()
     runtime = str(datetime.timedelta(seconds=round(end - start)))
 
-    print('''
-    Done.
-    {} phase changes reads from {} total unpaired
-    {} phase changes reads across mate pairs from {} total read pairs
-    {} reads had no-match variants.
-    {} reads did not have enough SNPs (> 0) to call
-    time taken: {}
-    '''.format(counters["phase_change"], counters["unpaired"],
-               counters["phase_change_mate_pair"], counters["paired"],
-               counters["no_match"], counters["seq"] - counters["seq_with_snps"],
-               runtime)
-         )
+    print('[readcomb] Done.')
+    print('[readcomb] Run stats:')
+    print('{} phase change reads from {} total unpaired'.format(counters['phase_change'], 
+        counters['unpaired']))
+    print('{} phase change reads across mate pairs from {} total read pairs'.format(
+        counters['phase_change_mate_pair'], counters['paired']))
+    print('{} reads had no-match variants'.format(counters['no_match']))
+    print('{} reads did not have enough SNPs (> 0) to call'.format(
+        counters['seq'] - counters['seq_with_snps']))
+    print('time taken: {}'.format(runtime))
 
     if args["log"]:
         needs_header = True
@@ -403,15 +402,17 @@ def matepairs_recomb():
             needs_header = False
         with open(args["log"], 'a') as f:
             if needs_header:
-                fieldnames = ['phase_change_reads', 'unpaired_reads',
+                fieldnames = ['run', 'phase_change_reads', 'unpaired_reads',
                               'phase_change_across_mate_pair', 'read_pairs',
-                              'no_match_reads' 'no_snp_reads', 'total_reads',
+                              'no_match_reads', 'no_snp_reads', 'total_reads',
                               'time_taken']
+                fieldnames.extend(sorted(args.keys()))
                 f.write(','.join(fieldnames) + '\n')
-            out_values = [counters["phase_change"], counters["unpaired"],
+            out_values = [datetime.datetime.now(), counters["phase_change"], counters["unpaired"],
                           counters["phase_change_mate_pair"], counters["paired"],
                           counters["no_match"], counters["seq"] - counters["seq_with_snps"],
                           counters["seq"], runtime]
+            out_values.extend([args[arg] for arg in sorted(args.keys())])
             f.write(','.join([str(n) for n in out_values]) + '\n')
 
 
