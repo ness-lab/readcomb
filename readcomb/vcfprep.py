@@ -18,7 +18,7 @@ def arg_parser():
     parser.add_argument('-v', '--vcf', required=True,
             type=str, help='File to filter (.vcf.gz)')
     parser.add_argument('--snps_only', required=False, 
-            action='store_true', help='Keep only SNPs [optional)]')
+            action='store_true', help='Keep only SNPs [optional]')
     parser.add_argument('--no_hets', required=False,
             action='store_true', help='Remove heterozygote calls [optional]') 
     parser.add_argument('--min_GQ', required=False, default=30,
@@ -109,11 +109,11 @@ def main():
     print('[readcomb] {} of {} records retained.'.format(kept_count, total_count))
     if out.endswith('.gz'):
         print('[readcomb] compressing outfile...')
-        proc = subprocess.Popen(['bgzip', out.replace('.gz', '')])
-        stdout, stderr = proc.communicate()
+        proc_bgzip = subprocess.Popen(['bgzip', out.replace('.gz', '')])
+        stdout, stderr = proc_bgzip.communicate()
         print('[readcomb] creating tabix index...')
-        proc = subprocess.Popen(['tabix', out])
-        stdout, stderr = proc.communicate()
+        proc_tabix = subprocess.Popen(['tabix', out])
+        stdout, stderr = proc_tabix.communicate()
         print('[readcomb] done.')
 
 if __name__ == '__main__':
