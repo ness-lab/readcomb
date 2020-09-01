@@ -64,8 +64,8 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     left_bound and right_bound using cyvcf2
 
     SNPs must have all calls with GQ >= 30 and no heterozygous calls.
-    (The heterozygous calls filter might need to be revisited for compatibility
-    with diploid species)
+    Please use the filter script to preprocess parental VCF prior to
+    phase change detection.
 
     vcf_file_obj: cyvcf2 VCF file object
     chromosome: string: chromosome name
@@ -79,9 +79,7 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region) if rec.is_snp and len(rec.ALT) > 0 
-               and rec.num_het == 0 and all(rec.gt_quals >= 30)
-               and rec.gt_bases[0] != rec.gt_bases[1]]
+    records = [rec for rec in vcf_file_obj(region)]
     return records
 
 
@@ -152,14 +150,14 @@ def cache_pairs(bam_file_obj, args):
     return cache, paired, unpaired
 
 def cigar(record):
-    '''
+    """
     Build the query segment using the cigar tuple given by the bam record so that it aligns with
     indexes of SNPs in the VCF and the reference sequence
 
     record: bam record from pysam alignment file
 
     Returns a dna sequence string
-    '''
+    """
     cigar_tuples = record.cigartuples
 
     # initialize segment for building
@@ -207,7 +205,7 @@ def cigar(record):
     return ''.join(segment)
 
 def phase_detection(snps, segment, record):
-    '''
+    """
     Takes a segment and a list in the region of the segment and generates a list of
     strings to represent in order the parent of each variant on the segment
 
@@ -217,7 +215,7 @@ def phase_detection(snps, segment, record):
     record: bam record from pysam alignment file
 
     Returns a list of strings ('1', '2', or 'N')
-    '''
+    """
 
     snp_lst = []
 
@@ -237,6 +235,9 @@ def phase_detection(snps, segment, record):
 
         parent1 = snp.gt_bases[0][0]
         parent2 = snp.gt_bases[1][0]
+
+        if parent1 == parent2: # ignore uninformative SNPs
+            continue
 
         if idx >= len(segment):
             break
