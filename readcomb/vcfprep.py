@@ -19,6 +19,8 @@ def arg_parser():
             type=str, help='File to filter (.vcf.gz)')
     parser.add_argument('--snps_only', required=False, 
             action='store_true', help='Keep only SNPs [optional]')
+    parser.add_argument('--indels_only', required=False, 
+            action='store_true', help='Keep only indels [optional]')
     parser.add_argument('--no_hets', required=False,
             action='store_true', help='Remove heterozygote calls [optional]') 
     parser.add_argument('--min_GQ', required=False, default=30,
@@ -28,9 +30,10 @@ def arg_parser():
 
     args = parser.parse_args()
 
-    return args.vcf, args.snps_only, args.no_hets, args.min_GQ, args.out
+    return args.vcf, args.snps_only, args,indels_only, \
+            args.no_hets, args.min_GQ, args.out
 
-def vcfprep(vcf, snps_only, no_hets, min_GQ, outfile):
+def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
     """
     Iterate through given parental VCF and remove records based on provided
     filters. All records where parent1 allele is the same as parent2
@@ -44,6 +47,8 @@ def vcfprep(vcf, snps_only, no_hets, min_GQ, outfile):
         path to input VCF
     snps_only : bool
         whether or not to only keep SNPs
+    indels_only : bool
+        whether or not to only keep indels
     no_hets : bool
         whether or not to remove het calls
     min_GQ : int
@@ -62,6 +67,8 @@ def vcfprep(vcf, snps_only, no_hets, min_GQ, outfile):
 
     if len(vcf_in.samples) > 2:
         raise ValueError('more than 2 parental samples in input VCF')
+    if snps_only and indels_only:
+        raise ValueError('both --snps_only and --indels_only provided. pick one or neither!')
 
     if outfile.endswith('.gz'):
         outfile = outfile.replace('.gz', '')
@@ -78,6 +85,10 @@ def vcfprep(vcf, snps_only, no_hets, min_GQ, outfile):
 
         # SNP filter
         if snps_only and not record.is_snp:
+            continue
+
+        # indel filter
+        if indels_only and not record.is_indel:
             continue
 
         # heterozygote call filter
@@ -100,11 +111,11 @@ def vcfprep(vcf, snps_only, no_hets, min_GQ, outfile):
 
 
 def main():
-    vcf, snps_only, no_hets, min_GQ, out = arg_parser()
+    vcf, snps_only, indels_only, no_hets, min_GQ, out = arg_parser()
     print('[readcomb] filtering {}'.format(vcf))
     if min_GQ < 30:
         print('[readcomb] WARNING: min GQ below 30 selected')
-    total_count, kept_count = vcfprep(vcf, snps_only, no_hets, min_GQ, out)
+    total_count, kept_count = vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, out)
     print('[readcomb] Complete.')
     print('[readcomb] {} of {} records retained.'.format(kept_count, total_count))
     if out.endswith('.gz'):
