@@ -30,7 +30,7 @@ def arg_parser():
 
     args = parser.parse_args()
 
-    return args.vcf, args.snps_only, args,indels_only, \
+    return args.vcf, args.snps_only, args.indels_only, \
             args.no_hets, args.min_GQ, args.out
 
 def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
