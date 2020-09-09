@@ -168,7 +168,7 @@ def human_phase_detection(snps, segment, record):
             # snip off the first position if it's a pure indel
             if strand1[0] == strand2[0]:
                 strand1 = strand1[1:]
-                strand2 = strand2[2:]
+                strand2 = strand2[1:]
                 start += 1
             
             # check if indel is outside of segment
