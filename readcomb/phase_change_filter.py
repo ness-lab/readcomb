@@ -230,26 +230,52 @@ def phase_detection(snps, segment, record):
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
         idx = snp.start - record.reference_start
 
-        if idx < 0:
-            raise ValueError('VCF indexing is off. Check SNP at {}'.format(snp))
-
-        parent1 = snp.gt_bases[0][0]
-        parent2 = snp.gt_bases[1][0]
+        parent1 = snp.gt_bases[0].split('/')[0]
+        parent2 = snp.gt_bases[1].split('/')[0]
 
         if parent1 == parent2: # ignore uninformative SNPs
             continue
+        
+        if snp.is_indel:
+            # snip off the first position if it's a pure indel
+            if parent1[0] == parent2[0]:
+                parent1 = parent1[1:]
+                parent2 = parent2[1:]
+                idx += 1
 
-        if idx >= len(segment):
-            break
+            # check if indel is outside of segment
+            if idx + max(len(parent1), len(parent2)) > len(segment):
+                continue
 
-        if segment[idx] == parent1:
-            snp_lst.append('1')
+            parent1_match = segment[idx:idx + len(parent1)] == parent1
+            parent2_match = segment[idx:idx + len(parent2)] == parent2
 
-        elif segment[idx] == parent2:
-            snp_lst.append('2')
-
+            if len(parent1) > len(parent2):
+                if parent1_match:
+                    snp_lst.append('1')
+                elif parent2_match:
+                    snp_lst.append('2')
+                else:
+                    snp_lst.append('N')
+            else:
+                if parent1_match:
+                    snp_lst.append('1')
+                elif parent2_match:
+                    snp_lst.append('2')
+                else:
+                    snp_lst.append('N')
         else:
-            snp_lst.append('N')
+            if idx >= len(segment):
+                break
+
+            if segment[idx] == parent1:
+                snp_lst.append('1')
+
+            elif segment[idx] == parent2:
+                snp_lst.append('2')
+
+            else:
+                snp_lst.append('N')
 
     return snp_lst
 
