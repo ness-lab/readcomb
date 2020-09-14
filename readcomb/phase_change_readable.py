@@ -75,6 +75,7 @@ def human_cigar(record, ref):
     # index to keep track of where we are in the query_segment
     query_segment = record.query_sequence
     index = 0
+    ref_id = 0 # reference segment does not include soft clips
     
     # no alignment, cigar_tuple is equal to None
     if cigar_tuples == None:
@@ -95,19 +96,21 @@ def human_cigar(record, ref):
         elif cigar_tuple[0] == 0:
             segment.append(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
+            ref_id += cigar_tuple[1]
 
         # 1 is an insertion, we will add gaps to the reference and snip off extras on the end
         elif cigar_tuple[0] == 1:
             segment.append(query_segment[index:index+cigar_tuple[1]])
             
-            ref = ref[:index] + '-' * cigar_tuple[1] + ref[index:]
-            ref = ref[:-cigar_tuple[1]]
+            ref = ref[:ref_id] + '-' * cigar_tuple[1] + ref[ref_id:]
             
             index += cigar_tuple[1]
+            ref_id += cigar_tuple[1]
 
         # 2 is an deletion, add a gap to the query to realign it to the reference
         elif cigar_tuple[0] == 2:
             segment.append('-' * cigar_tuple[1])
+            ref_id += cigar_tuple[1]
 
         else:
             raise Exception('No condition for tuple ' + str(cigar_tuples.index(cigar_tuple)) + ' of ' + str(cigar_tuples))
@@ -144,8 +147,11 @@ def human_phase_detection(snps, segment, record):
             if cigar_tuples[current_tuple][0] == 1:
                 # shift the start to the right by the amount of insertion to compensate for it
                 start += cigar_tuples[current_tuple][1]
-
-            current_base += cigar_tuples[current_tuple][1]
+            
+            # the segment doesn't include soft clipped and hard clipped parts anymore
+            if cigar_tuples[current_tuple][0] != 4 and cigar_tuples[current_tuple][0] != 5:
+                current_base += cigar_tuples[current_tuple][1]
+            
             current_tuple += 1
         
         # indexing for VCF seems to be a bit weird and will sometimes be -1

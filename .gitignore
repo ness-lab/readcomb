@@ -16,3 +16,4 @@ tests/parental.vcf.gz.tbi
 tests/parental.vcf.gz
 tests/filtered_full.vcf.gz
 tests/filtered_full.vcf.gz.tbi
+tests/weird_read_header.sam
