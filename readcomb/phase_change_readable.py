@@ -61,7 +61,7 @@ def human_cigar(record, ref):
     ref: reference sequence that is aligned with the query sequence obtained from a fasta file
     
     Returns:
-    ref: modified reference sequence that was given with gaps if there are insertions in the query sequence
+    reference: modified reference sequence that was given with gaps if there are insertions in the query sequence
     segment: dna sequence that is built using the bam cigar tuples and query segment
     
     Function for human readable version of mate pair sequence analysis. Takes in a bam record and a reference
@@ -69,12 +69,13 @@ def human_cigar(record, ref):
     '''
     cigar_tuples = record.cigartuples
     
-    # initialize segment for building
+    # initialize segment and reference for building
     segment = []
+    reference = []
     
     # index to keep track of where we are in the query_segment
     query_segment = record.query_sequence
-    index = 0
+    query_id = 0
     ref_id = 0 # reference segment does not include soft clips
     
     # no alignment, cigar_tuple is equal to None
@@ -85,37 +86,39 @@ def human_cigar(record, ref):
         # 4 = soft clipping, the record.query_sequence has the portion that is soft clipping
         # so we need to skip it with index
         if cigar_tuple[0] == 4:
-            index += cigar_tuple[1]
+            query_id += cigar_tuple[1]
 
         # 5 = hard clipping, record.query_sequence does not have the portion that is
         # hard clipping so we don't skip it and we don't add anything
         elif cigar_tuple[0] == 5:
             continue
 
-        # 0 is a match, just add it onto the segment 
+        # 0 is a match, just add it onto the segment and reference
         elif cigar_tuple[0] == 0:
-            segment.append(query_segment[index:index+cigar_tuple[1]])
-            index += cigar_tuple[1]
+            segment.append(query_segment[query_id:query_id+cigar_tuple[1]])
+            reference.append(ref[ref_id:ref_id+cigar_tuple[1]])
+
+            query_id += cigar_tuple[1]
             ref_id += cigar_tuple[1]
 
         # 1 is an insertion, we will add gaps to the reference and snip off extras on the end
         elif cigar_tuple[0] == 1:
-            segment.append(query_segment[index:index+cigar_tuple[1]])
+            segment.append(query_segment[query_id:query_id+cigar_tuple[1]])
+            reference.append('-' * cigar_tuple[1])
             
-            ref = ref[:ref_id] + '-' * cigar_tuple[1] + ref[ref_id:]
-            
-            index += cigar_tuple[1]
-            ref_id += cigar_tuple[1]
+            query_id += cigar_tuple[1]
 
         # 2 is an deletion, add a gap to the query to realign it to the reference
         elif cigar_tuple[0] == 2:
             segment.append('-' * cigar_tuple[1])
+            reference.append(ref[ref_id:ref_id+cigar_tuple[1]])
+            
             ref_id += cigar_tuple[1]
 
         else:
             raise Exception('No condition for tuple ' + str(cigar_tuples.index(cigar_tuple)) + ' of ' + str(cigar_tuples))
 
-    return ref, ''.join(segment)
+    return ''.join(reference), ''.join(segment)
 
 def human_phase_detection(snps, segment, record):
     
@@ -224,7 +227,7 @@ def human_write_recomb(pair_info, f_obj, snp_str, record, ref, segment):
 
     f_obj.write('Cigar Tuples: ' + str(record.cigartuples) + '\n')
 
-    f_obj.write(str(ref.seq) + '\n' + segment + '\n' + snp_str +  '\n \n')
+    f_obj.write(ref + '\n' + segment + '\n' + snp_str +  '\n \n')
 
     return
 
@@ -289,7 +292,7 @@ def human_read_matepairs_recomb():
         #qualities_str = ''.join([chr(quality + 33) for quality in record.query_alignment_qualities])
         
         # reference sequence
-        ref = chrom_1[record.reference_start:record.reference_start + record.query_alignment_length] 
+        ref = str(chrom_1[record.reference_start:record.reference_start + record.query_alignment_length].seq) 
         
         # analyze cigar string
         ref, segment = human_cigar(record, ref)
@@ -312,7 +315,7 @@ def human_read_matepairs_recomb():
             
             #qualities_str2 = ''.join([chr(quality + 33) for quality in record2.query_alignment_qualities])
             
-            ref2 = chrom_1[record2.reference_start:record2.reference_start + record2.query_alignment_length] 
+            ref2 = str(chrom_1[record2.reference_start:record2.reference_start + record2.query_alignment_length].seq) 
             
             ref2, segment2 = human_cigar(record2, ref2)
             
