@@ -236,13 +236,11 @@ def phase_detection(snps, segment, record):
         if parent1 == parent2: # ignore uninformative SNPs
             continue
         
+        # ignore if snp is before sequence
+        if idx < 0:
+            continue
+        
         if snp.is_indel:
-            # snip off the first position if it's a pure indel
-            if parent1[0] == parent2[0]:
-                parent1 = parent1[1:]
-                parent2 = parent2[1:]
-                idx += 1
-
             # check if indel is outside of segment
             if idx + max(len(parent1), len(parent2)) > len(segment):
                 continue
