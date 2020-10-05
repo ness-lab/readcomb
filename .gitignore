@@ -10,3 +10,10 @@ tests/chlamy.5.3.w_organelles_mtMinus.fasta
 tests/chlamy.5.3.w_organelles_mtMinus.fasta.fai
 __pycache__
 .ipynb_checkpoints
+tests/SRR5243251.dup.bai
+tests/SRR5243251.dup.bam
+tests/parental.vcf.gz.tbi
+tests/parental.vcf.gz
+tests/filtered_full.vcf.gz
+tests/filtered_full.vcf.gz.tbi
+tests/weird_read_header.sam
