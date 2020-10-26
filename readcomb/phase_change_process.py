@@ -204,21 +204,23 @@ def phase_detection(snps, segment, record):
 
 class Processor(Process):
 
-    def __init__(self, input_queue, counter_queue, writer_queue, vcf_file_name, args):
-        super(Processor, self).__init__()
+    def __init__(self, input_queue, counter_queue, 
+                writer_queue, vcf_file_name, args, **kwargs):
+        Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counter_queue = counter_queue
         self.writer_queue = writer_queue
         self.vcf_file_obj = VCF(vcf_file_name)
+        # header used for creating records
+        self.header = pysam.AlignmentFile(args['bam'], 'r').header
         self.args = args
+        self.counter = 0
 
-    def run(self):
-        
+    def run(self):     
         pair = self.input_queue.get(block=True)
         while pair:
-
-            record_1 = pysam.fromstring(pair[0])
-            record_2 = pysam.fromstring(pair[1])
+            record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
+            record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
             snps_1 = check_snps(self.vcf_file_obj, record_1.reference_name,
                                     record_1.reference_start,
@@ -228,11 +230,17 @@ class Processor(Process):
                                     record_2.reference_start + record_2.query_alignment_length)
             
             # updating counters
+            self.counter += 1
+            if self.counter % 1000 == 0:
+                print(self.name + ' at ' 
+                + str(self.counter) + ' iterations')
+
             self.counter_queue.put('seq')
             if len(snps_1) + len(snps_2) > 1: 
                 self.counter_queue.put('seq_with_snps')
             # skip if not enough snps
             else:
+                pair = self.input_queue.get(block=True)
                 continue
 
             segment_1 = cigar(record_1)
@@ -257,8 +265,8 @@ class Processor(Process):
 
     
 class Counter(Process):
-    def __init__(self, input_queue):
-        super(Processor, self).__init__()
+    def __init__(self, input_queue, **kwargs):
+        Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counters = {
             'no_match': 0,
@@ -294,20 +302,22 @@ class Counter(Process):
 
 
 class Writer(Process):
-    def __init__(self, input_queue, bam_file_name, output_file_name):
-        super(Processor, self).__init__()
+    def __init__(self, input_queue, args, **kwargs):
+        Process.__init__(self, **kwargs)
         self.input_queue = input_queue
 
-        pysam_obj = pysam.AlignmentFile(bam_file_name, 'r')
-        self.out = pysam.AlignmentFile(output_file_name, 'wh', 
+        pysam_obj = pysam.AlignmentFile(args['bam'], 'r')
+        self.out = pysam.AlignmentFile(args['out'], 'wh', 
                                         template=pysam_obj)
+        self.header = pysam.AlignmentFile(args['bam'], 'r').header
 
     def run(self):
         pair = self.input_queue.get(block=True)
         while pair:
-            for record in pair:
-                self.out.write(pysam.fromstring(record))
-
+            for str_record in pair:
+                record = pysam.AlignedSegment.fromstring(str_record, 
+                                                        self.header)
+                self.out.write(record)
             pair = self.input_queue.get(block=True)
 
 
@@ -322,45 +332,60 @@ def matepair_process():
     # pysam arguement object
     bam = pysam.AlignmentFile(args['bam'], 'r')
 
+    print('Creating processes')
     # set up counter and writer
     count_input = Queue()
-    counter = Counter(count_input)
-    counter.run()
+    counter = Counter(count_input, daemon=True)
+    counter.start()
 
     write_input = Queue()
-    writer = Writer(write_input, args['bam'], args['out'])
-    counter.run()
+    writer = Writer(write_input, args, daemon=True)
+    writer.start()
 
     processes = []
     input_queues = []
     # set up processes
-    for i in args['processes']:
+    for i in range(args['processes']):
         input_queue = Queue()
         input_queues.append(input_queue)
-        processes.append(Processor(input_queue, count_input, write_input, args['vcf'], args))
-        processes[i].run()
+        processes.append(Processor(input_queue, count_input, 
+                            write_input, args['vcf'], args, 
+                            daemon=True, name='Process ' + str(i)))
+        processes[i].start()
 
     prev_record = None
     process_idx = 0
 
+    print('Processes created')
+
     for record in bam:
         # check if record is in a proper pair
-        if not record.is_proper_pair or record.is_secondary or record.is_supplentary:
+        if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
             continue
 
         if not prev_record:
-            prev_record = record.to_string()
+            prev_record = record
         else:
-            pair = [prev_record, record.to_string()]
-            
-            # iterate through process input queues to check if they're full
-            while input_queues[process_idx].full():
-                process_idx += 1
+            if prev_record.reference_name != record.reference_name:
+                raise ValueError('Pre-sorting of bam file went wrong')
+
+            pair = [prev_record.to_string(), record.to_string()]
 
             input_queues[process_idx].put(pair)
 
+            # give record to next process
+            if process_idx < args['processes'] - 1:
+                process_idx += 1
+            else:
+                process_idx = 0 
+
+            # clear the pair
+            prev_record = None
+
+    print('Waiting for processes to complete')
+
     # shut down processes
-    for i in len(processes):
+    for i in range(len(processes)):
         input_queues[i].put(None)
         input_queues[i].close()
         processes[i].join()
