@@ -3,6 +3,7 @@
 Readcomb filtering script utilizing multiprocessing
 """
 import os
+import sys
 import argparse
 import time
 import datetime
@@ -50,6 +51,15 @@ def arg_parser():
         'out': args.out,
         }
 
+class SilentVCF:
+    def __enter__(self):
+        self._original_stderr = sys.stderr
+        sys.stderr = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stderr.close()
+        sys.stderr = self._original_stderr
+
 def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     """
     Generate all SNPs on given chromosome and VCF file within the
@@ -71,7 +81,8 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region)]
+    with SilentVCF():
+        records = [rec for rec in vcf_file_obj(region)]
     return records
 
 def cigar(record):
@@ -231,9 +242,11 @@ class Processor(Process):
             
             # updating counters
             self.counter += 1
+            '''
             if self.counter % 1000 == 0:
                 print(self.name + ' at ' 
                 + str(self.counter) + ' iterations')
+            '''
 
             self.counter_queue.put('seq')
             if len(snps_1) + len(snps_2) > 1: 
@@ -315,8 +328,13 @@ class Writer(Process):
         pair = self.input_queue.get(block=True)
         while pair:
             for str_record in pair:
+                sp = str_record.split('\t')
                 record = pysam.AlignedSegment.fromstring(str_record, 
                                                         self.header)
+                try:
+                    assert len(record.query_sequence) == len(record.qual)
+                except:
+                    raise ValueError(str_record + 'bonked')
                 self.out.write(record)
             pair = self.input_queue.get(block=True)
 
@@ -329,7 +347,7 @@ def matepair_process():
     # dictionary of arguements
     args = arg_parser()
 
-    # pysam arguement object
+    # pysam argument object
     bam = pysam.AlignmentFile(args['bam'], 'r')
 
     print('Creating processes')
@@ -358,7 +376,7 @@ def matepair_process():
 
     print('Processes created')
 
-    for record in bam:
+    for record in tqdm(bam):
         # check if record is in a proper pair
         if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
             continue
@@ -396,6 +414,7 @@ def matepair_process():
     counter.join()
 
     write_input.put(None)
+    time.sleep(1)
     write_input.close()
     writer.join()
 
