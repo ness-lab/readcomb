@@ -214,14 +214,27 @@ def phase_detection(snps, segment, record):
     return snp_lst
 
 class Processor(Process):
+    """
+    Inherited class of multiprocessing process that takes in bam sequences from main
+    scheduler and does phase change analysis, outputting bams that fit the arguement
+    criteria to the writer process
+
+    input_queue -- multiprocessing.Queue(), get bam sequences in string form from main
+                    scheduler
+    counter_queue -- multiprocessing.Queue(), put sequence information to be tallied
+    writer_queue -- multiprocessing.Queue(), put sequences that fit the argument
+                    criteria to the writer process
+    args -- dictionary of args from arg_parse()
+    **kwargs -- extra arguements passed onto the super class process
+    """
 
     def __init__(self, input_queue, counter_queue, 
-                writer_queue, vcf_file_name, args, **kwargs):
+                writer_queue, args, **kwargs):
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counter_queue = counter_queue
         self.writer_queue = writer_queue
-        self.vcf_file_obj = VCF(vcf_file_name)
+        self.vcf_file_obj = VCF(args['vcf'])
         # header used for creating records
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
         self.args = args
@@ -242,11 +255,6 @@ class Processor(Process):
             
             # updating counters
             self.counter += 1
-            '''
-            if self.counter % 1000 == 0:
-                print(self.name + ' at ' 
-                + str(self.counter) + ' iterations')
-            '''
 
             self.counter_queue.put('seq')
             if len(snps_1) + len(snps_2) > 1: 
@@ -278,7 +286,16 @@ class Processor(Process):
 
     
 class Counter(Process):
-    def __init__(self, input_queue, **kwargs):
+    """
+    Inherited class of multiprocessing process that receives sequence information
+    from Processor processes and tallies them to print to STDOUT or a log file
+
+    input_queue -- multiprocessing.Queue() get sequence information from all Processor processes
+    args -- dictionary of arguements from arg_parse()
+    **kwargs -- extra args that is passed onto super class process
+    """
+
+    def __init__(self, input_queue, args, **kwargs):
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counters = {
@@ -287,17 +304,25 @@ class Counter(Process):
             'seq_with_snps': 0,
             'seq': 0
             }
+        self.args = args
 
     def run(self):
 
         # start timer
         start = time.time()
-
+        self.progress = tqdm(total=None)
         count = self.input_queue.get(block=True)
+
         while count:
             self.counters[count] += 1
+            # update progress bar
+            if count == 'seq':
+                self.progress.update(n=1)
+            
             count = self.input_queue.get(block=True)
         
+        self.progress.close()
+
         # end timer
         end = time.time()
         runtime = str(datetime.timedelta(seconds=round(end - start)))
@@ -311,10 +336,42 @@ class Counter(Process):
         ))
         print('time taken: {}'.format(runtime))
         
-        # TODO: add logging support
+        if self.args["log"]:
+            # determine if we are adding to file or 
+            needs_header = False if os.path.isfile(self.args['log']) else True
+
+            with open(self.args["log"], 'a') as f:
+                if needs_header:
+                    fieldnames = ['time',
+                                'phase_change_reads',
+                                'no_match_reads', 
+                                'seq_with_snps', 
+                                'no_snp_reads', 
+                                'seqs',
+                                'time_taken']
+                    fieldnames.extend(sorted(self.args.keys()))
+                    f.write(','.join(fieldnames) + '\n')
+
+                out_values = [datetime.datetime.now(), 
+                            self.counters['phase_change'], 
+                            self.counters['no_match'],
+                            self.counters['seq_with_snps'], 
+                            self.counters['seq'] - self.counters['seq_with_snps'],
+                            self.counters["seq"],
+                            runtime]
+                out_values.extend([self.args[key] for key in sorted(self.args.keys())])
+                f.write(','.join([str(n) for n in out_values]) + '\n')
 
 
 class Writer(Process):
+    """
+    Inherited class of multiprocessing process that receives bam sequences that fit the
+    critera of the arguements and writes them to a new pysam alignment file
+
+    input_queue -- multiprocessing.Queue() gets filtered bam sequences from Processor processes
+    args -- dictionary of arguements from arg_parse
+    **kwargs -- extra args that is passed onto super class process
+    """
     def __init__(self, input_queue, args, **kwargs):
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
@@ -328,21 +385,21 @@ class Writer(Process):
         pair = self.input_queue.get(block=True)
         while pair:
             for str_record in pair:
-                sp = str_record.split('\t')
-                record = pysam.AlignedSegment.fromstring(str_record, 
-                                                        self.header)
-                try:
-                    assert len(record.query_sequence) == len(record.qual)
-                except:
-                    raise ValueError(str_record + 'bonked')
+                record = pysam.AlignedSegment.fromstring(str_record, self.header)
                 self.out.write(record)
+
             pair = self.input_queue.get(block=True)
+        self.out.close()
 
 
 
 
 def matepair_process():
     """
+    Main process that manages Processors, Counter, and Writer processes and then divides
+    up the bam file sequences equally into the processors to analyze.
+
+    Gets arguements from command line parsing
     """
     # dictionary of arguements
     args = arg_parser()
@@ -353,7 +410,7 @@ def matepair_process():
     print('Creating processes')
     # set up counter and writer
     count_input = Queue()
-    counter = Counter(count_input, daemon=True)
+    counter = Counter(count_input, args, daemon=True)
     counter.start()
 
     write_input = Queue()
@@ -367,7 +424,7 @@ def matepair_process():
         input_queue = Queue()
         input_queues.append(input_queue)
         processes.append(Processor(input_queue, count_input, 
-                            write_input, args['vcf'], args, 
+                            write_input, args, 
                             daemon=True, name='Process ' + str(i)))
         processes[i].start()
 
@@ -376,7 +433,7 @@ def matepair_process():
 
     print('Processes created')
 
-    for record in tqdm(bam):
+    for record in bam:
         # check if record is in a proper pair
         if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
             continue
@@ -400,8 +457,6 @@ def matepair_process():
             # clear the pair
             prev_record = None
 
-    print('Waiting for processes to complete')
-
     # shut down processes
     for i in range(len(processes)):
         input_queues[i].put(None)
@@ -414,7 +469,6 @@ def matepair_process():
     counter.join()
 
     write_input.put(None)
-    time.sleep(1)
     write_input.close()
     writer.join()
 
