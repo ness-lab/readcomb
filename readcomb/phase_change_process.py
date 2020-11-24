@@ -7,8 +7,10 @@ import sys
 import argparse
 import time
 import datetime
-import itertools
 import pysam
+import subprocess
+import pandas as pd
+from io import BytesIO
 from multiprocessing import Queue, Process
 from cyvcf2 import VCF
 from tqdm import tqdm
@@ -238,10 +240,10 @@ class Processor(Process):
         # header used for creating records
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
         self.args = args
-        self.counter = 0
 
-    def run(self):     
+    def run(self):
         pair = self.input_queue.get(block=True)
+
         while pair:
             record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
@@ -252,9 +254,6 @@ class Processor(Process):
             snps_2 = check_snps(self.vcf_file_obj, record_2.reference_name,
                                     record_2.reference_start,
                                     record_2.reference_start + record_2.query_alignment_length)
-            
-            # updating counters
-            self.counter += 1
 
             self.counter_queue.put('seq')
             if len(snps_1) + len(snps_2) > 1: 
@@ -310,13 +309,17 @@ class Counter(Process):
 
         # start timer
         start = time.time()
-        self.progress = tqdm(total=None)
+
+        # create tqdm iteration counter if no bars
+        if 'pair_count' in self.args:
+            self.progress = tqdm(total=self.args['pair_count'])
+
         count = self.input_queue.get(block=True)
 
         while count:
             self.counters[count] += 1
-            # update progress bar
-            if count == 'seq':
+            # update iteration counter if no bars
+            if count == 'seq' and 'pair_count' in self.args:
                 self.progress.update(n=1)
             
             count = self.input_queue.get(block=True)
@@ -404,6 +407,20 @@ def matepair_process():
     # dictionary of arguements
     args = arg_parser()
 
+    # idxstats on bam/bai file
+    if not os.path.isfile(args['bam'] + '.bai'):
+        print('Bai file not found, continuing without progress bars')
+    else:
+        stats = subprocess.check_output(['samtools', 'idxstats', args['bam']])
+        stats_table = pd.read_csv(BytesIO(stats), sep='\t', 
+                                    names=['chrom', 'length', 'map_reads', 'unmap_reads'])
+        pairs_sum = stats_table['map_reads'].sum()
+        args['pair_count'] = int(pairs_sum / 2) # divide 2 to get pairs
+
+        if pairs_sum % 2 != 0:
+            raise ValueError('Preprocessing of bam file went wrong')
+
+
     # pysam argument object
     bam = pysam.AlignmentFile(args['bam'], 'r')
 
@@ -436,13 +453,13 @@ def matepair_process():
     for record in bam:
         # check if record is in a proper pair
         if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
-            continue
+            raise ValueError('Preprocessing of bam file went wrong')
 
         if not prev_record:
             prev_record = record
         else:
             if prev_record.reference_name != record.reference_name:
-                raise ValueError('Pre-sorting of bam file went wrong')
+                raise ValueError('Preprocessing of bam file went wrong')
 
             pair = [prev_record.to_string(), record.to_string()]
 
