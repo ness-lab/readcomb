@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
 """
-Main readcomb filtering script
+Readcomb filtering script utilizing multiprocessing
 """
 import os
+import sys
 import argparse
 import time
 import datetime
-import threading
-import itertools
 import pysam
+import subprocess
+import pandas as pd
+from io import BytesIO
+from multiprocessing import Queue, Process
 from cyvcf2 import VCF
 from tqdm import tqdm
 
@@ -26,15 +29,12 @@ def arg_parser():
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents, required')
 
-    parser.add_argument('-t', '--threads', required=False, type=int, default=1,
-                        help='Number of threads to run readcomb filter on, default is 1')
-
-    parser.add_argument('-c', '--chrom', required=False, type=str, default='all',
-                        help='Chromosome sequences in the bam file to run (default all)')
+    parser.add_argument('-p', '--processes', required=False, type=int, default=1,
+                        help='Number of processes to run readcomb filter on, default is 1')
 
     parser.add_argument('-m', '--mode', required=False, type=str, default='phase_change',
                         help='Read filtering mode (default phase_change) \
-                             [phase_change|no_match|all]')
+                             [phase_change|no_match]')
 
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Filename for log metric output [optional]')
@@ -42,21 +42,25 @@ def arg_parser():
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis.sam',
                         help='File to write to (default recomb_diagnosis)')
 
-    parser.add_argument('-i', '--improper', action='store_true',
-                        help='Include unpaired/improper reads in filter results')
-
     args = parser.parse_args()
 
     return {
-        "bam": args.bam,
-        "vcf": args.vcf,
-        "threads": args.threads,
-        "chrom": args.chrom,
-        "mode": args.mode,
-        "log": args.log,
-        "out": args.out,
-        "improper": args.improper,
+        'bam': args.bam,
+        'vcf': args.vcf,
+        'processes': args.processes,
+        'mode': args.mode,
+        'log': args.log,
+        'out': args.out,
         }
+
+class SilentVCF:
+    def __enter__(self):
+        self._original_stderr = sys.stderr
+        sys.stderr = open(os.devnull, 'w')
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stderr.close()
+        sys.stderr = self._original_stderr
 
 def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     """
@@ -79,75 +83,9 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
 
     # list comp with if statement to only include SNPs
-    records = [rec for rec in vcf_file_obj(region)]
+    with SilentVCF():
+        records = [rec for rec in vcf_file_obj(region)]
     return records
-
-
-def cache_pairs(bam_file_obj, args):
-    """
-    Iterates through a bam file to find mate pairs and cache them together in a dictionary
-
-    bam_file_obj: pysam alignment file object
-    chromosome: string
-
-    Returns a dictionary of tuples (cache), the number of unpaired reads (unpaired),
-    and the number of mate pairs (paired).
-
-    Cache is a dictionary with a unique sequence read id as the key and a tuple pair of bam
-    records as the value. If there is no mate pair, the second object in the tuple is None
-    """
-
-    print('[readcomb] Caching reads for ' + args['chrom'] + ' sequences')
-
-    cache = {}
-
-    paired = 0
-    unpaired = 0
-
-    for record in tqdm(bam_file_obj):
-
-        # filter out the read if it is in a improper read 
-        # unless specified not to in arguement
-        if not record.is_proper_pair and not args['improper']:
-            continue
-
-        # filter out the read if it is a secondary or supplementary mate pair
-        if record.is_secondary or record.is_supplementary:
-            continue
-
-        # filter out read if it isn't the chromosome specified in arguement
-        if args['chrom'] != record.reference_name and args['chrom'] != 'all':
-            continue
-
-        # check if query_name and reference_name exist
-        if record.query_name is None or record.reference_name is None:
-            continue
-
-        # key is unique combination of query name and the chromosome
-        name = record.query_name + record.reference_name
-
-        if name not in cache:
-            cache[name] = [record, None]
-            unpaired += 1
-        elif cache[name][1] is None:
-            cache[name][1] = record
-            paired += 2
-            unpaired -= 1
-        else:
-            raise ValueError('More than 2 sequences for mate pairs ' + record.query_name \
-                             + ' in chromosome ' + record.reference_name)
-    
-    # when the improper arguement is not true, remove records that could
-    # not be cached in a pair, these are labeled proper pairs by the bam
-    # but their mate is on another chromosome from an alignment error
-    if not args['improper']:
-        unpaired = 0
-        cache = {query_name: records for query_name, records in list(cache.items()) 
-                 if records[1] is not None}
-
-
-    print('Number of unpaired sequences: {}, read pairs: {}'.format(unpaired, paired))
-    return cache, paired, unpaired
 
 def cigar(record):
     """
@@ -277,169 +215,290 @@ def phase_detection(snps, segment, record):
 
     return snp_lst
 
-class MatepairsThread(threading.Thread):
+class Processor(Process):
     """
-    Inherited class from python's threading.Thread module. This class can be called
-    to create a parallel thread that will filter cached bam sequences
+    Inherited class of multiprocessing process that takes in bam sequences from main
+    scheduler and does phase change analysis, outputting bams that fit the arguement
+    criteria to the writer process
 
-    counters: dictionary of counters shared across all threads
-    args: dictionary of arguments parsed from the command line call of this program
-    pairs: list of dictionaries
-    index: int, the index of a dictionary in pairs assigned to this thread
-
-    The thread does not return anything but rather overwrites the pairs[index] dictionary
-    assigned to this thread with the filtered results
+    input_queue -- multiprocessing.Queue(), get bam sequences in string form from main
+                    scheduler
+    counter_queue -- multiprocessing.Queue(), put sequence information to be tallied
+    writer_queue -- multiprocessing.Queue(), put sequences that fit the argument
+                    criteria to the writer process
+    args -- dictionary of args from arg_parse()
+    **kwargs -- extra arguements passed onto the super class process
     """
-    def __init__(self, counters, args, pairs, index):
-        # initiate threading.Thread super class
-        threading.Thread.__init__(self)
-        self.counters = counters
+
+    def __init__(self, input_queue, counter_queue, 
+                writer_queue, args, **kwargs):
+        Process.__init__(self, **kwargs)
+        self.input_queue = input_queue
+        self.counter_queue = counter_queue
+        self.writer_queue = writer_queue
+        self.vcf_file_obj = VCF(args['vcf'])
+        # header used for creating records
+        self.header = pysam.AlignmentFile(args['bam'], 'r').header
         self.args = args
 
-        # cyvcf2 VCF file object creation
-        self.vcf_file_obj = VCF(args["vcf"])
-
-        # pairs is a list of dictionaries
-        # self.pairs[self.index] is the dictionary assigned to this thread
-        self.pairs = pairs
-        self.index = index
-
-        # output dictionary
-        self.filtered_pairs = {}
-
     def run(self):
-        for query_name in tqdm(self.pairs[self.index]):
-            snp_lst = []
-            pair = self.pairs[self.index][query_name]
-            for record in pair:
-                if record:
-                    self.counters["seq"] += 1
+        pair = self.input_queue.get(block=True)
 
-                    segment = cigar(record)
+        while pair:
+            record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
+            record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
-                    snps = check_snps(self.vcf_file_obj, record.reference_name,
-                                      record.reference_start,
-                                      record.reference_start + record.query_alignment_length)
+            snps_1 = check_snps(self.vcf_file_obj, record_1.reference_name,
+                                    record_1.reference_start,
+                                    record_1.reference_start + record_1.query_alignment_length)
+            snps_2 = check_snps(self.vcf_file_obj, record_2.reference_name,
+                                    record_2.reference_start,
+                                    record_2.reference_start + record_2.query_alignment_length)
 
-                    snp_lst += phase_detection(snps, segment, record)
+            self.counter_queue.put('seq')
+            if len(snps_1) + len(snps_2) > 1: 
+                self.counter_queue.put('seq_with_snps')
+            # skip if not enough snps
+            else:
+                pair = self.input_queue.get(block=True)
+                continue
 
-                    if len(snps) > 0:
-                        self.counters["seq_with_snps"] += 1
+            segment_1 = cigar(record_1)
+            segment_2 = cigar(record_2)
+
+            snp_lst = phase_detection(snps_1, segment_1, record_1) + phase_detection(snps_2, segment_2, record_2)
 
             if '1' in snp_lst and '2' in snp_lst:
+                self.counter_queue.put('phase_change')
 
-                if pair[1]:
-                    self.counters["phase_change_mate_pair"] += 1
-                else:
-                    self.counters["phase_change"] += 1
-
-                if 'phase_change' in self.args["mode"]:
-                    self.filtered_pairs[query_name] = pair
-
+                if 'phase_change' in self.args['mode']:
+                    self.writer_queue.put(pair)
+                
             if 'N' in snp_lst:
-                self.counters["no_match"] += 1
+                self.counter_queue.put('no_match')
 
-                if 'no_match' in self.args["mode"]:
-                    self.filtered_pairs[query_name] = pair
+                if 'no_match' in self.args['mode']:
+                    self.writer_queue.put(pair)
 
-        self.pairs[self.index] = self.filtered_pairs
+            pair = self.input_queue.get(block=True)
 
-def matepairs_recomb():
+
+    
+class Counter(Process):
     """
-    Main function of phase_change_filter.py
+    Inherited class of multiprocessing process that receives sequence information
+    from Processor processes and tallies them to print to STDOUT or a log file
 
-    Parses arguments, generates file objects, and creates threads for sequence filtering
-    then waits for the thread to finish before writing the results to a file and outputting
-    counters to the console and a log file if chosen
+    input_queue -- multiprocessing.Queue() get sequence information from all Processor processes
+    args -- dictionary of arguements from arg_parse()
+    **kwargs -- extra args that is passed onto super class process
     """
-    # start timer
-    start = time.time()
 
-    # dictionary of arguments
+    def __init__(self, input_queue, args, **kwargs):
+        Process.__init__(self, **kwargs)
+        self.input_queue = input_queue
+        self.counters = {
+            'no_match': 0,
+            'phase_change': 0,
+            'seq_with_snps': 0,
+            'seq': 0
+            }
+        self.args = args
+
+    def run(self):
+
+        # start timer
+        start = time.time()
+
+        # create tqdm iteration counter if no bars
+        if 'pair_count' in self.args:
+            self.progress = tqdm(total=self.args['pair_count'])
+
+        count = self.input_queue.get(block=True)
+
+        while count:
+            self.counters[count] += 1
+            # update iteration counter if no bars
+            if count == 'seq' and 'pair_count' in self.args:
+                self.progress.update(n=1)
+            
+            count = self.input_queue.get(block=True)
+        
+        self.progress.close()
+
+        # end timer
+        end = time.time()
+        runtime = str(datetime.timedelta(seconds=round(end - start)))
+
+        # print counters to STDOUT
+        print('{} phase change reads pairs from total {} read pairs'.format(
+            self.counters['phase_change'], self.counters['seq']))
+        print('{} reads had no-match variants'.format(self.counters['no_match']))
+        print('{} reads did not have enough SNPs (> 0) to call'.format(
+            self.counters['seq'] - self.counters['seq_with_snps']
+        ))
+        print('time taken: {}'.format(runtime))
+        
+        if self.args["log"]:
+            # determine if we are adding to file or 
+            needs_header = False if os.path.isfile(self.args['log']) else True
+
+            with open(self.args["log"], 'a') as f:
+                if needs_header:
+                    fieldnames = ['time',
+                                'phase_change_reads',
+                                'no_match_reads', 
+                                'seq_with_snps', 
+                                'no_snp_reads', 
+                                'seqs',
+                                'time_taken']
+                    fieldnames.extend(sorted(self.args.keys()))
+                    f.write(','.join(fieldnames) + '\n')
+
+                out_values = [datetime.datetime.now(), 
+                            self.counters['phase_change'], 
+                            self.counters['no_match'],
+                            self.counters['seq_with_snps'], 
+                            self.counters['seq'] - self.counters['seq_with_snps'],
+                            self.counters["seq"],
+                            runtime]
+                out_values.extend([self.args[key] for key in sorted(self.args.keys())])
+                f.write(','.join([str(n) for n in out_values]) + '\n')
+
+
+class Writer(Process):
+    """
+    Inherited class of multiprocessing process that receives bam sequences that fit the
+    critera of the arguements and writes them to a new pysam alignment file
+
+    input_queue -- multiprocessing.Queue() gets filtered bam sequences from Processor processes
+    args -- dictionary of arguements from arg_parse
+    **kwargs -- extra args that is passed onto super class process
+    """
+    def __init__(self, input_queue, args, **kwargs):
+        Process.__init__(self, **kwargs)
+        self.input_queue = input_queue
+
+        pysam_obj = pysam.AlignmentFile(args['bam'], 'r')
+        self.out = pysam.AlignmentFile(args['out'], 'wh', 
+                                        template=pysam_obj)
+        self.header = pysam.AlignmentFile(args['bam'], 'r').header
+
+    def run(self):
+        pair = self.input_queue.get(block=True)
+        while pair:
+            for str_record in pair:
+                record = pysam.AlignedSegment.fromstring(str_record, self.header)
+                self.out.write(record)
+
+            pair = self.input_queue.get(block=True)
+        self.out.close()
+
+
+
+
+def matepair_process():
+    """
+    Main process that manages Processors, Counter, and Writer processes and then divides
+    up the bam file sequences equally into the processors to analyze.
+
+    Gets arguements from command line parsing
+    """
+    # dictionary of arguements
     args = arg_parser()
 
-    # pysam alignment file object
-    bam_file_obj = pysam.AlignmentFile(args["bam"], 'r')
+    # idxstats on bam/bai file
+    if not os.path.isfile(args['bam'] + '.bai'):
+        print('Bai file not found, continuing without progress bars')
+    else:
+        stats = subprocess.check_output(['samtools', 'idxstats', args['bam']])
+        stats_table = pd.read_csv(BytesIO(stats), sep='\t', 
+                                    names=['chrom', 'length', 'map_reads', 'unmap_reads'])
+        pairs_sum = stats_table['map_reads'].sum()
+        args['pair_count'] = int(pairs_sum / 2) # divide 2 to get pairs
 
-    # pysam alignment file with input bam as filter
-    f_obj = pysam.AlignmentFile(args["out"], 'wh', template=bam_file_obj)
+        if pairs_sum % 2 != 0:
+            raise ValueError('Preprocessing of bam file went wrong')
 
-    #counters
-    counters = {"no_match": 0,
-                "phase_change": 0,
-                "phase_change_mate_pair": 0,
-                "seq_with_snps": 0,
-                "seq": 0}
 
-    pairs, counters["paired"], counters["unpaired"] = cache_pairs(bam_file_obj, args)
+    # pysam argument object
+    bam = pysam.AlignmentFile(args['bam'], 'r')
 
-    print('[readcomb] Beginning phase change analysis')
+    print('Creating processes')
+    # set up counter and writer
+    count_input = Queue()
+    counter = Counter(count_input, args, daemon=True)
+    counter.start()
 
-    split_pairs = []
-    split_index = max(len(pairs) // args["threads"], 1)
-    pairs_iter = iter(pairs.items())
+    write_input = Queue()
+    writer = Writer(write_input, args, daemon=True)
+    writer.start()
 
-    threads = []
+    processes = []
+    input_queues = []
+    # set up processes
+    for i in range(args['processes']):
+        input_queue = Queue()
+        input_queues.append(input_queue)
+        processes.append(Processor(input_queue, count_input, 
+                            write_input, args, 
+                            daemon=True, name='Process ' + str(i)))
+        processes[i].start()
 
-    for thread_index in range(args["threads"]):
-        # split pairs dictionary into multiple dictionaries
-        # and store them in the list split_pairs to be used by threads
-        if thread_index < args["threads"] - 1:
-            split_pairs.append(dict(itertools.islice(pairs_iter, split_index)))
+    prev_record = None
+    process_idx = 0
+
+    print('Processes created')
+
+    for record in bam:
+        # check if record is in a proper pair
+        if not record.is_proper_pair or record.is_secondary or record.is_supplementary:
+            raise ValueError('Preprocessing of bam file went wrong')
+
+        if not prev_record:
+            prev_record = record
         else:
-            split_pairs.append(dict(pairs_iter))
+            if prev_record.reference_name != record.reference_name:
+                raise ValueError('Preprocessing of bam file went wrong')
 
-        # initiate and start threads
-        threads.append(MatepairsThread(counters, args, split_pairs, thread_index))
-        threads[thread_index].start()
+            pair = [prev_record.to_string(), record.to_string()]
 
-    # end threads
-    for thread in threads:
-        thread.join()
+            input_queues[process_idx].put(pair)
 
-    # write filtered data onto output sam file
-    for pairs in split_pairs:
-        for query_name in pairs:
-            f_obj.write(pairs[query_name][0])
+            # give record to next process
+            if process_idx < args['processes'] - 1:
+                process_idx += 1
+            else:
+                process_idx = 0 
 
-            if pairs[query_name][1]:
-                f_obj.write(pairs[query_name][1])
+            # clear the pair
+            prev_record = None
 
+    # shut down processes
+    for i in range(len(processes)):
+        input_queues[i].put(None)
+        input_queues[i].close()
+        processes[i].join()
 
-    # end timer
-    end = time.time()
-    runtime = str(datetime.timedelta(seconds=round(end - start)))
+    # shut down counter and writer
+    count_input.put(None)
+    count_input.close()
+    counter.join()
 
-    print('[readcomb] Done.')
-    print('[readcomb] Run stats:')
-    print('{} phase change reads from {} total unpaired'.format(counters['phase_change'], 
-        counters['unpaired']))
-    print('{} phase change reads across mate pairs from {} total read pairs'.format(
-        counters['phase_change_mate_pair'], counters['paired']))
-    print('{} reads had no-match variants'.format(counters['no_match']))
-    print('{} reads did not have enough SNPs (> 0) to call'.format(
-        counters['seq'] - counters['seq_with_snps']))
-    print('time taken: {}'.format(runtime))
-
-    if args["log"]:
-        needs_header = True
-        if os.path.isfile(args["log"]):
-            needs_header = False
-        with open(args["log"], 'a') as f:
-            if needs_header:
-                fieldnames = ['run', 'phase_change_reads', 'unpaired_reads',
-                              'phase_change_across_mate_pair', 'read_pairs',
-                              'no_match_reads', 'no_snp_reads', 'total_reads',
-                              'time_taken']
-                fieldnames.extend(sorted(args.keys()))
-                f.write(','.join(fieldnames) + '\n')
-            out_values = [datetime.datetime.now(), counters["phase_change"], counters["unpaired"],
-                          counters["phase_change_mate_pair"], counters["paired"],
-                          counters["no_match"], counters["seq"] - counters["seq_with_snps"],
-                          counters["seq"], runtime]
-            out_values.extend([args[arg] for arg in sorted(args.keys())])
-            f.write(','.join([str(n) for n in out_values]) + '\n')
-
+    write_input.put(None)
+    write_input.close()
+    writer.join()
 
 if __name__ == '__main__':
-    matepairs_recomb()
+    matepair_process()
+    
+        
+
+            
+
+
+    
+
+    
+
+
