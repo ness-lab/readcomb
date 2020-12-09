@@ -62,12 +62,12 @@ class SilentVCF:
         sys.stderr.close()
         sys.stderr = self._original_stderr
 
-def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
+def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     """
-    Generate all SNPs on given chromosome and VCF file within the
+    Generate all variants on given chromosome and VCF file within the
     left_bound and right_bound using cyvcf2
 
-    SNPs must have all calls with GQ >= 30 and no heterozygous calls.
+    Variants must have all calls with GQ >= 30 and no heterozygous calls.
     Please use the filter script to preprocess parental VCF prior to
     phase change detection.
 
@@ -82,7 +82,6 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
     # in order to keep code consistent
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
 
-    # list comp with if statement to only include SNPs
     with SilentVCF():
         records = [rec for rec in vcf_file_obj(region)]
     return records
@@ -90,7 +89,7 @@ def check_snps(vcf_file_obj, chromosome, left_bound, right_bound):
 def cigar(record):
     """
     Build the query segment using the cigar tuple given by the bam record so that it aligns with
-    indexes of SNPs in the VCF and the reference sequence
+    indexes of variants in the VCF and the reference sequence
 
     record: bam record from pysam alignment file
 
@@ -117,7 +116,7 @@ def cigar(record):
             index += cigar_tuple[1]
 
         # 1 is an insertion to query segment
-        # skip it because SNPs are aligned to reference and do not exist in this region
+        # skip it because variants are aligned to reference and do not exist in this region
         elif cigar_tuple[0] == 1:
             index += cigar_tuple[1]
 
@@ -142,12 +141,12 @@ def cigar(record):
 
     return ''.join(segment)
 
-def phase_detection(snps, segment, record):
+def phase_detection(variants, segment, record):
     """
     Takes a segment and a list in the region of the segment and generates a list of
     strings to represent in order the parent of each variant on the segment
 
-    snps: list of cyvcf2 variants in the region of the segment given by the function check_snps(),
+    variants: list of cyvcf2 variants in the region of the segment given by the function check_variants(),
         can include variants that are outside of the region when there is soft clipping
     segment: string sequence that is the segment built by the function cigar()
     record: bam record from pysam alignment file
@@ -155,30 +154,30 @@ def phase_detection(snps, segment, record):
     Returns a list of strings ('1', '2', or 'N')
     """
 
-    snp_lst = []
+    variant_lst = []
 
     cigar_tuples = record.cigartuples
 
     # check for no alignment
     if not cigar_tuples:
-        return snp_lst
+        return variant_lst
 
-    for snp in snps:
-        # Using SNP.start and record.reference_start since they are both 0 based
-        # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
-        idx = snp.start - record.reference_start
+    for variant in variants:
+        # Using variant.start and record.reference_start since they are both 0 based
+        # variant.start grabs vcf positions in 0 index while vcfs are 1 indexed
+        idx = variant.start - record.reference_start
 
-        parent1 = snp.gt_bases[0].split('/')[0]
-        parent2 = snp.gt_bases[1].split('/')[0]
+        parent1 = variant.gt_bases[0].split('/')[0]
+        parent2 = variant.gt_bases[1].split('/')[0]
 
-        if parent1 == parent2: # ignore uninformative SNPs
+        if parent1 == parent2: # ignore uninformative variants
             continue
         
-        # ignore if snp is before sequence
+        # ignore if variant is before sequence
         if idx < 0:
             continue
         
-        if snp.is_indel:
+        if variant.is_indel:
             # check if indel is outside of segment
             if idx + max(len(parent1), len(parent2)) > len(segment):
                 continue
@@ -188,32 +187,32 @@ def phase_detection(snps, segment, record):
 
             if len(parent1) > len(parent2):
                 if parent1_match:
-                    snp_lst.append('1')
+                    variant_lst.append('1')
                 elif parent2_match:
-                    snp_lst.append('2')
+                    variant_lst.append('2')
                 else:
-                    snp_lst.append('N')
+                    variant_lst.append('N')
             else:
-                if parent1_match:
-                    snp_lst.append('1')
-                elif parent2_match:
-                    snp_lst.append('2')
+                if parent2_match:
+                    variant_lst.append('2')
+                elif parent1_match:
+                    variant_lst.append('1')
                 else:
-                    snp_lst.append('N')
+                    variant_lst.append('N')
         else:
             if idx >= len(segment):
                 break
 
             if segment[idx] == parent1:
-                snp_lst.append('1')
+                variant_lst.append('1')
 
             elif segment[idx] == parent2:
-                snp_lst.append('2')
+                variant_lst.append('2')
 
             else:
-                snp_lst.append('N')
+                variant_lst.append('N')
 
-    return snp_lst
+    return variant_lst
 
 class Processor(Process):
     """
@@ -248,17 +247,17 @@ class Processor(Process):
             record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
-            snps_1 = check_snps(self.vcf_file_obj, record_1.reference_name,
+            variants_1 = check_variants(self.vcf_file_obj, record_1.reference_name,
                                     record_1.reference_start,
                                     record_1.reference_start + record_1.query_alignment_length)
-            snps_2 = check_snps(self.vcf_file_obj, record_2.reference_name,
+            variants_2 = check_variants(self.vcf_file_obj, record_2.reference_name,
                                     record_2.reference_start,
                                     record_2.reference_start + record_2.query_alignment_length)
 
             self.counter_queue.put('seq')
-            if len(snps_1) + len(snps_2) > 1: 
-                self.counter_queue.put('seq_with_snps')
-            # skip if not enough snps
+            if len(variants_1) + len(variants_2) > 1: 
+                self.counter_queue.put('seq_with_variants')
+            # skip if not enough variants
             else:
                 pair = self.input_queue.get(block=True)
                 continue
@@ -266,15 +265,15 @@ class Processor(Process):
             segment_1 = cigar(record_1)
             segment_2 = cigar(record_2)
 
-            snp_lst = phase_detection(snps_1, segment_1, record_1) + phase_detection(snps_2, segment_2, record_2)
+            variant_lst = phase_detection(variants_1, segment_1, record_1) + phase_detection(variants_2, segment_2, record_2)
 
-            if '1' in snp_lst and '2' in snp_lst:
+            if '1' in variant_lst and '2' in variant_lst:
                 self.counter_queue.put('phase_change')
 
                 if 'phase_change' in self.args['mode']:
                     self.writer_queue.put(pair)
                 
-            if 'N' in snp_lst:
+            if 'N' in variant_lst:
                 self.counter_queue.put('no_match')
 
                 if 'no_match' in self.args['mode']:
@@ -300,7 +299,7 @@ class Counter(Process):
         self.counters = {
             'no_match': 0,
             'phase_change': 0,
-            'seq_with_snps': 0,
+            'seq_with_variants': 0,
             'seq': 0
             }
         self.args = args
@@ -334,8 +333,8 @@ class Counter(Process):
         print('{} phase change reads pairs from total {} read pairs'.format(
             self.counters['phase_change'], self.counters['seq']))
         print('{} reads had no-match variants'.format(self.counters['no_match']))
-        print('{} reads did not have enough SNPs (> 0) to call'.format(
-            self.counters['seq'] - self.counters['seq_with_snps']
+        print('{} reads did not have enough variants (> 0) to call'.format(
+            self.counters['seq'] - self.counters['seq_with_variants']
         ))
         print('time taken: {}'.format(runtime))
         
@@ -348,8 +347,8 @@ class Counter(Process):
                     fieldnames = ['time',
                                 'phase_change_reads',
                                 'no_match_reads', 
-                                'seq_with_snps', 
-                                'no_snp_reads', 
+                                'seq_with_variants', 
+                                'no_variant_reads', 
                                 'seqs',
                                 'time_taken']
                     fieldnames.extend(sorted(self.args.keys()))
@@ -358,8 +357,8 @@ class Counter(Process):
                 out_values = [datetime.datetime.now(), 
                             self.counters['phase_change'], 
                             self.counters['no_match'],
-                            self.counters['seq_with_snps'], 
-                            self.counters['seq'] - self.counters['seq_with_snps'],
+                            self.counters['seq_with_variants'], 
+                            self.counters['seq'] - self.counters['seq_with_variants'],
                             self.counters["seq"],
                             runtime]
                 out_values.extend([self.args[key] for key in sorted(self.args.keys())])
@@ -458,7 +457,7 @@ def matepair_process():
         if not prev_record:
             prev_record = record
         else:
-            if prev_record.reference_name != record.reference_name:
+            if prev_record.query_name != record.query_name:
                 raise ValueError('Preprocessing of bam file went wrong')
 
             pair = [prev_record.to_string(), record.to_string()]
