@@ -6,7 +6,7 @@ with open("README.md", "r") as fh:
 setuptools.setup(
     name="readcomb-aays",
     version="0.0.1",
-    author="Jimmy Liu and Ahmed Hasan",
+    author="Jiyu Liu and Ahmed Hasan",
     # author_email="author@example.com",
     description="Fast detection of recombinant reads in BAMs",
     long_description=long_description,
