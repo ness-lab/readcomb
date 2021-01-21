@@ -309,13 +309,4 @@ def pairs_creation(bam_filepath, vcf_filepath):
 
     return pairs
 
-if __name__ == '__main__':
-    pairs = pairs_creation('analysis/jimmy/recomb_diagnosis.sam', 'analysis/jimmy/filtered_full.vcf.gz')
-    
-    for pair in pairs[200000:200010]:
-        pair.call()
-        print(pair.simplify)
-        print(pair.masked_simplify)
-        print('-----------------------')
-
     

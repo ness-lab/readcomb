@@ -21,7 +21,7 @@ def arg_parser():
     """
     parser = argparse.ArgumentParser(
         description='filter BAM for reads containing phase changes',
-        usage='python3.5 phase_change_filter.py [options]')
+        usage='readcomb-filter [options]')
 
     parser.add_argument('-b', '--bam', required=True,
                         type=str, help='BAM to filter, required')

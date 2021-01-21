@@ -13,7 +13,7 @@ from tqdm import tqdm
 def arg_parser():
     parser = argparse.ArgumentParser(
         description='prep parental VCF for phase change detection', 
-        usage='python3.5 vcfprep.py [options]')
+        usage='readcomb-vcfprep [options]')
 
     parser.add_argument('-v', '--vcf', required=True,
             type=str, help='File to filter (.vcf.gz)')
