@@ -29,7 +29,7 @@ def arg_parser():
     parser.add_argument('-v', '--vcf', required=True,
                         type=str, help='VCF containing parents, required')
 
-    parser.add_argument('-p', '--processes', required=False, type=int, default=1,
+    parser.add_argument('-p', '--processes', required=False, type=int, default=4,
                         help='Number of processes to run readcomb filter on, default is 1')
 
     parser.add_argument('-m', '--mode', required=False, type=str, default='phase_change',
