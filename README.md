@@ -1,17 +1,23 @@
-# `Readcomb` - fast detection of recombinant reads in BAMs
+# `readcomb` - fast detection of recombinant reads in BAMs
 
-## What is it?
+`readcomb` is a collection of command line and Python tools for fast detection
+of recombination events in pooled high-throughput sequencing data. `readcomb`
+searches for changes in haplotype phase across individual reads and classifies
+the recombination event based on the properties of the observed recombinant haplotype.
 
-Readcomb is a hybrid command line script and Python module for the filtering and classification of bam sequences based on their phase change properties. 
+`readcomb` was designed for use with the model alga _Chlamydomonas reinhardtii_ and
+currently only supports haploids. Although the means of specifically detecting gene
+conversion are more specific to _C. reinhardtii_, everything else in `readcomb` is
+generalizable to the detection of recombination events in any haploid species. 
 
 ## Installation
 
-``` Python
+```bash
 pip install readcomb
 ```
 
 ## Dependencies
-- [cyvcf2](https://brentp.github.io/cyvcf2/) - Fast retrieval and filtering of vcf files and vcf objects written in C
+- [cyvcf2](https://brentp.github.io/cyvcf2/) - Fast retrieval and filtering of VCF files and VCF objects written in C
 - [pysam](https://pysam.readthedocs.io/en/latest/api.html) - Interface for SAM and BAM files and provides SAM and BAM objects
 - [pandas](https://pandas.pydata.org/) - Support for data tables
 - [tqdm](https://tqdm.github.io/) - Provides updating progress bars for command line programs
@@ -20,43 +26,58 @@ pip install readcomb
 # Usage:
 
 ## bamprep 
-Command line preprocessing script for bam files
-```bash
 
+Command line preprocessing script for BAM files. `bamprep` will prepare an
+index file, filter out unusuable reads, and output a BAM _sorted by read name_.
+`readcomb` requires BAMs sorted by read name for fast parsing and filtering.
+
+
+```bash
+readcomb-bamprep --bam [bam_filepath] --out [outdir]
 ```
 
 Optional parameters:
 
-- 
+- `--samtools` - Path to samtools binary
+- `--threads [int]` - Number of threads samtools should use (default 1)
+- `--index_csi` - Create CSI index instead of BAI
+- `--no_progress` - Disable index creation - this will speed up `bamprep` but
+  will mean no progress bars when filtering
 
 ## vcfprep
-Command line preprocessing script for vcf files
+
+Command line preprocessing script for VCF files
+
 ```bash
 readcomb-vcfprep --vcf [vcf_filepath] --out [output_filepath]
 ```
 
 Optional arguments
-- `--snps_only`, Keep only SNPs
-- `--indels_only`, Keep only indels
-- `--no_hets`, Remove heterozygote calls
-- `--min_GQ [quality]`, Minimum genotype quality at both sites (default is 30)
+- `--snps_only` - Keep only SNPs
+- `--indels_only` - Keep only indels
+- `--no_hets` - Remove heterozygote calls
+- `--min_GQ [int]` - Minimum genotype quality at both sites (default 30)
 
 ## filter
+
 Command line multiprocessing script for identification of bam sequences with phase changes
+
 ```bash
 readcomb-filter --bam [bam_filepath] --vcf [vcf_filepath]
 ```
 
 Optional arguments:
-- `-p, --processes [processes]`, Number of processes available for filter (default is 4)
-- `-m, --mode [phase_change|no_match]`, Filtering mode (default phase_change)
+- `-p, --processes [processes]`, Number of processes available for filter (default 4)
+- `-m, --mode [phase_change|no_match]`, Filtering mode (default `phase_change`)
 - `-l, --log [log_filepath]`, Filename for log metric output
-- `-o, --out [output_filepath]`, File to write filtered output to (default recomb_diagnosis)
+- `-o, --out [output_filepath]`, File to write filtered output to (default `recomb_diagnosis`)
 
 ## classification
+
 Python module for detailed classification of sequences containing phase changes
+
 ```python
-from readcomb.classification import rc
+import readcomb.classification as rc
 
 # generate list of bam read pairs
 pairs = rc.pairs_creation(bam_filepath, vcf_filepath)
