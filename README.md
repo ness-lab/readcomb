@@ -1,9 +1,11 @@
 # `readcomb` - fast detection of recombinant reads in BAMs
 
+[![PyPI version](https://badge.fury.io/py/readcomb.svg)](https://badge.fury.io/py/readcomb)
+
 `readcomb` is a collection of command line and Python tools for fast detection
 of recombination events in pooled high-throughput sequencing data. `readcomb`
-searches for changes in haplotype phase across individual reads and classifies
-the recombination event based on the properties of the observed recombinant haplotype.
+searches for changes in parental haplotype phase across individual reads and classifies
+recombination events based on various properties of the observed recombinant haplotypes.
 
 `readcomb` was designed for use with the model alga _Chlamydomonas reinhardtii_ and
 currently only supports haploids. Although the means of specifically detecting gene
