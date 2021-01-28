@@ -82,17 +82,15 @@ import readcomb.classification as rc
 # generate list of bam read pairs
 pairs = rc.pairs_creation(bam_filepath, vcf_filepath)
 
-# call each of the pairs to analyse and classify them
-# map and lambda function
-map(lambda x:x.call(), pairs)
-
 # or use a for loop
 for pair in pairs:
-    pair.call() 
+    pair.classify() 
 
 # get classification of first read pair
-pairs[0].classify
+pairs[0].call
 # > gene_conversion
+pairs[0].masked_call
+# > no_phase_change
 ```
 ## License
 
