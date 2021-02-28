@@ -40,7 +40,7 @@ def arg_parser():
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Filename for log metric output [optional]')
 
-    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis.sam',
+    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
                         help='File to write to (default recomb_diagnosis)')
 
     args = parser.parse_args()
@@ -329,13 +329,15 @@ class Counter(Process):
         # create tqdm iteration counter if no bars
         if 'pair_count' in self.args:
             self.progress = tqdm(total=self.args['pair_count'])
+        else:
+            self.progress = tqdm()
 
         count = self.input_queue.get(block=True)
 
         while count:
             self.counters[count] += 1
-            # update iteration counter if no bars
-            if count == 'seq' and 'pair_count' in self.args:
+            # update iteration counter if sequence
+            if count == 'seq':
                 self.progress.update(n=1)
             
             count = self.input_queue.get(block=True)
@@ -397,7 +399,7 @@ class Writer(Process):
         self.input_queue = input_queue
 
         pysam_obj = pysam.AlignmentFile(args['bam'], 'r')
-        self.out = pysam.AlignmentFile(args['out'], 'wh', 
+        self.out = pysam.AlignmentFile(args['out'] + '.sam', 'wh', 
                                         template=pysam_obj)
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
 

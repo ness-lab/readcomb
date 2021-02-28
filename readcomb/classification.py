@@ -2,8 +2,14 @@
 
 import pysam
 from cyvcf2 import VCF
-from readcomb.filter import check_variants
-from readcomb.filter import cigar
+
+try:
+    from readcomb.filter import check_variants
+    from readcomb.filter import cigar
+except:
+    from filter import check_variants
+    from filter import cigar
+    print('it is not recommended to directly run filter.py instead of installing readcomb')
     
 def downstream_phase_detection(variants, segment, record):
     """
