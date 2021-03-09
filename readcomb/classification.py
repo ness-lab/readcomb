@@ -7,9 +7,10 @@ try:
     from readcomb.filter import check_variants
     from readcomb.filter import cigar
 except:
+    print('it is not recommended to directly run filter.py instead of installing readcomb')
     from filter import check_variants
     from filter import cigar
-    print('it is not recommended to directly run filter.py instead of installing readcomb')
+    
     
 def downstream_phase_detection(variants, segment, record):
     """
@@ -229,9 +230,39 @@ class Pair():
             self.masked_call = 'complex'
         else:
             self.masked_call = 'no_phase_change'
-                
 
+    def get_midpoint(self):
+        '''
+        Returns the midpoint of a pair of reads
 
+        The midpoint of a phase change is halfway between the two closets variants
+        that signify a phase chang event. For gene conversions, it is halfway between
+        the two outer variants of the group of 3. This logic extends to read pairs
+        with complex haplotypes. If there are no phase changes, the midpoint is
+        halfway between the start of the 1st read and the end of the 2nd read
+        '''
+
+        # return midpoint if it's already been called
+        if hasattr(self, 'midpoint'):
+            return self.midpoint
+
+        # classify if read has not been already
+        if not hasattr(self, 'call'):
+            self.classify()
+
+        # simplification of results
+        # [(haplotype, beginning, end), ...]
+
+        if self.call == 'no_phase_change':
+            start = self.condensed[0][1]
+            end = self.condensed[0][2]
+            self.midpoint = int((start + end) / 2)
+        else:
+            start = self.condensed[0][2]
+            end = self.condensed[-1][1]
+            self.midpoint = int((start + end) / 2)
+
+        return self.midpoint
 
 
 def pairs_creation(bam_filepath, vcf_filepath):
@@ -250,5 +281,3 @@ def pairs_creation(bam_filepath, vcf_filepath):
             prev_rec = None
 
     return pairs
-
-    
