@@ -104,6 +104,29 @@ class Pair():
             self.rec_2 = record1
         
         self.vcf_filepath = vcf_filepath
+
+    def __str__(self):
+        if hasattr(self, 'call'):
+            string = f'Record name: {self.rec_1.query_name} \n' + \
+                    f'Record1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
+                    f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
+                    f'Record2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
+                    f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
+                    f'VCF: {self.vcf_filepath} \n' + \
+                    f'Condensed: {self.condensed} \n' + \
+                    f'Call: {self.call} \n' + \
+                    f'Condensed Masked: {self.masked_condensed} \n' + \
+                    f'Call Masked: {self.masked_call} \n' + \
+                    f'Midpoint: {self.get_midpoint()}'
+        else:
+            string = f'Record name: {self.rec_1.query_name} \n' + \
+                    f'Record1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
+                    f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
+                    f'Record2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
+                    f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
+                    f'VCF: {self.vcf_filepath}'
+        
+        return string
     
     def package(self):
         '''
@@ -156,12 +179,15 @@ class Pair():
 
             # first variant
             if len(self.condensed) == 0:
-                self.condensed.append([haplotype, self.rec_1.reference_start, None])
+                self.condensed.append([haplotype, self.rec_1.reference_start, self.rec_1.reference_start])
             
             # different haplotype
-            if self.condensed[-1][0] != haplotype:
-                self.condensed[-1][2] = location
-                self.condensed.append([haplotype, location, None]) 
+            elif self.condensed[-1][0] != haplotype:
+                # middle of previous variant location and current variant
+                # gonna round down so it's not a decimal
+                midpoint = int((self.condensed[-1][2] + location) // 2)
+                self.condensed[-1][2] = midpoint
+                self.condensed.append([haplotype, midpoint, midpoint]) 
             
             # last variant
             if len(self.detection_2) == 0:
@@ -254,13 +280,18 @@ class Pair():
         # [(haplotype, beginning, end), ...]
 
         if self.call == 'no_phase_change':
-            start = self.condensed[0][1]
-            end = self.condensed[0][2]
+            # midpoint is middle of two paired reads if no phase change
+            start = self.rec_1.reference_start
+            end = self.rec_2.reference_start + self.rec_2.query_alignment_length
             self.midpoint = int((start + end) / 2)
+        elif self.call == 'phase_change':
+            # (X, begin, end), (Y, begin, end): end of X = beginning of Y = midpoint
+            self.midpoint = self.condensed[0][2]
         else:
+            # kind of a shortcut using midpoints to find the middle
             start = self.condensed[0][2]
             end = self.condensed[-1][1]
-            self.midpoint = int((start + end) / 2)
+            self.midpoint = (start + end) / 2
 
         return self.midpoint
 
