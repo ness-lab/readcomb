@@ -11,7 +11,8 @@ import pysam
 import subprocess
 import pandas as pd
 from io import BytesIO
-from multiprocessing import Queue, Process
+from multiprocessing import Queue
+from multiprocessing import Process
 from cyvcf2 import VCF
 from tqdm import tqdm
 
@@ -39,7 +40,7 @@ def arg_parser():
     parser.add_argument('-l', '--log', required=False,
                         type=str, help='Filename for log metric output [optional]')
 
-    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis.sam',
+    parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
                         help='File to write to (default recomb_diagnosis)')
 
     args = parser.parse_args()
@@ -54,6 +55,11 @@ def arg_parser():
         }
 
 class SilentVCF:
+    '''
+    helper class for check_variants that helps silence cyvcf2 when 
+    looking for variants in chromosomes that are not included in the vcf
+    and cyvcf2 gives a warning
+    '''
     def __enter__(self):
         self._original_stderr = sys.stderr
         sys.stderr = open(os.devnull, 'w')
@@ -81,7 +87,7 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
     region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
-
+    
     with SilentVCF():
         records = [rec for rec in vcf_file_obj(region)]
     return records
@@ -108,33 +114,38 @@ def cigar(record):
     if cigar_tuples is None:
         return segment
 
+    # terminology on consume query/reference from samtools SAM specifications
     for cigar_tuple in cigar_tuples:
 
         # 0 is a match, add it onto the segment
+        # consume query and reference
         if cigar_tuple[0] == 0:
             segment.append(query_segment[index:index+cigar_tuple[1]])
             index += cigar_tuple[1]
 
-        # 1 is an insertion to query segment
-        # skip it because variants are aligned to reference and do not exist in this region
+        # 1 is an insertion in query segment
+        # consume query by increasing index
         elif cigar_tuple[0] == 1:
             index += cigar_tuple[1]
 
-        # 2 is an deletion to query segment, add a gap to realign it to reference
-        # don't add index to not moving further through the query segment
+        # 2 is an deletion to query segment
+        # consume reference by adding gaps to segment
         elif cigar_tuple[0] == 2:
             segment.append('-' * cigar_tuple[1])
 
-        # 4 is soft clipping, query sequence includes this but is not aligned to reference
+        # 4 is soft clipping
+        # consume query by increasing index
         elif cigar_tuple[0] == 4:
             index += cigar_tuple[1]
 
-        # 5 = hard clipping, record.query_sequence does not have the portion that is
-        # hard clipping so skip it and don't add anything
+        # 5 = hard clipping
+        # does NOT consume query or reference
         elif cigar_tuple[0] == 5:
             continue
 
         else:
+            # currently does not support padding (6),
+            # sequence match (7), and sequence mismatch (8)
             raise ValueError(
                 'No condition for tuple {} of {}'.format(
                     cigar_tuples.index(cigar_tuple), cigar_tuples))
@@ -170,7 +181,8 @@ def phase_detection(variants, segment, record):
         parent1 = variant.gt_bases[0].split('/')[0]
         parent2 = variant.gt_bases[1].split('/')[0]
 
-        if parent1 == parent2: # ignore uninformative variants
+        # ignore uninformative variants
+        if parent1 == parent2:
             continue
         
         # ignore if variant is before sequence
@@ -185,6 +197,9 @@ def phase_detection(variants, segment, record):
             parent1_match = segment[idx:idx + len(parent1)] == parent1
             parent2_match = segment[idx:idx + len(parent2)] == parent2
 
+            # always check parent haplotype that is longer first as
+            # most include the shorter haplotype thus the longer haplotype
+            # is harder to match
             if len(parent1) > len(parent2):
                 if parent1_match:
                     variant_lst.append('1')
@@ -199,7 +214,8 @@ def phase_detection(variants, segment, record):
                     variant_lst.append('1')
                 else:
                     variant_lst.append('N')
-        else:
+
+        else: # variant is a SNP
             if idx >= len(segment):
                 break
 
@@ -236,7 +252,7 @@ class Processor(Process):
         self.counter_queue = counter_queue
         self.writer_queue = writer_queue
         self.vcf_file_obj = VCF(args['vcf'])
-        # header used for creating records
+        # header used for converting bam string to bam object
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
         self.args = args
 
@@ -244,6 +260,7 @@ class Processor(Process):
         pair = self.input_queue.get(block=True)
 
         while pair:
+            # use bam header to convert bam string back to pysam bam object
             record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
@@ -312,13 +329,15 @@ class Counter(Process):
         # create tqdm iteration counter if no bars
         if 'pair_count' in self.args:
             self.progress = tqdm(total=self.args['pair_count'])
+        else:
+            self.progress = tqdm()
 
         count = self.input_queue.get(block=True)
 
         while count:
             self.counters[count] += 1
-            # update iteration counter if no bars
-            if count == 'seq' and 'pair_count' in self.args:
+            # update iteration counter if sequence
+            if count == 'seq':
                 self.progress.update(n=1)
             
             count = self.input_queue.get(block=True)
@@ -338,8 +357,9 @@ class Counter(Process):
         ))
         print('time taken: {}'.format(runtime))
         
+        # write to log if argument defined
         if self.args["log"]:
-            # determine if we are adding to file or 
+            # determine if we are adding to file or creating new log file
             needs_header = False if os.path.isfile(self.args['log']) else True
 
             with open(self.args["log"], 'a') as f:
@@ -379,7 +399,7 @@ class Writer(Process):
         self.input_queue = input_queue
 
         pysam_obj = pysam.AlignmentFile(args['bam'], 'r')
-        self.out = pysam.AlignmentFile(args['out'], 'wh', 
+        self.out = pysam.AlignmentFile(args['out'] + '.sam', 'wh', 
                                         template=pysam_obj)
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
 
@@ -391,6 +411,8 @@ class Writer(Process):
                 self.out.write(record)
 
             pair = self.input_queue.get(block=True)
+        # very important to close or last piece of information
+        # in buffer will not write to file
         self.out.close()
 
 
@@ -426,6 +448,7 @@ def matepair_process():
     print('Creating processes')
     # set up counter and writer
     count_input = Queue()
+    # daemon causes other sub-processes to auto shutdown if main process is interrupted
     counter = Counter(count_input, args, daemon=True)
     counter.start()
 
@@ -441,7 +464,7 @@ def matepair_process():
         input_queues.append(input_queue)
         processes.append(Processor(input_queue, count_input, 
                             write_input, args, 
-                            daemon=True, name='Process ' + str(i)))
+                            daemon=True, name='Process ' + str(i))) 
         processes[i].start()
 
     prev_record = None
@@ -459,7 +482,8 @@ def matepair_process():
         else:
             if prev_record.query_name != record.query_name:
                 raise ValueError('Preprocessing of bam file went wrong')
-
+            
+            # convert bam sequence to string so it can be pickled and sent in queue
             pair = [prev_record.to_string(), record.to_string()]
 
             input_queues[process_idx].put(pair)
@@ -475,6 +499,7 @@ def matepair_process():
 
     # shut down processes
     for i in range(len(processes)):
+        # pass None to let processes know all bam sequences have been scheduled
         input_queues[i].put(None)
         input_queues[i].close()
         processes[i].join()

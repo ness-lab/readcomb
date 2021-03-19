@@ -84,7 +84,7 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
                     either ensure samtools is in your PATH or specify a
                     samtools binary using the --samtools argument""")
         else:
-            samtools = out.decode('utf-8')
+            samtools = out.decode('utf-8').rstrip('\n')
 
     # format args
     if outdir:
