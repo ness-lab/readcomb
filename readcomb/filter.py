@@ -17,9 +17,6 @@ from cyvcf2 import VCF
 from tqdm import tqdm
 
 def arg_parser():
-    """
-    Parse command line args.
-    """
     parser = argparse.ArgumentParser(
         description='filter BAM for reads containing phase changes',
         usage='readcomb-filter [options]')
@@ -55,11 +52,7 @@ def arg_parser():
         }
 
 class SilentVCF:
-    '''
-    helper class for check_variants that helps silence cyvcf2 when 
-    looking for variants in chromosomes that are not included in the vcf
-    and cyvcf2 gives a warning
-    '''
+    # helper class for check_variants that silences cyvcf2 warnings
     def __enter__(self):
         self._original_stderr = sys.stderr
         sys.stderr = open(os.devnull, 'w')
@@ -70,18 +63,22 @@ class SilentVCF:
 
 def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     """
-    Generate all variants on given chromosome and VCF file within the
-    left_bound and right_bound using cyvcf2
+    Fetch variants from vcf file in given bounds.
 
-    Variants must have all calls with GQ >= 30 and no heterozygous calls.
-    Please use the filter script to preprocess parental VCF prior to
-    phase change detection.
+    Parameters
+    ----------
+    vcf_file_obj : cyvcf2.VCF
+        ``cyvcf2`` VCF file object
+    chromosome : str
+        reference sequence name of bound
+    left_bound : int
+        0-based index of sequence left bound
+    right_bound : int
+        0-based index of sequence right bound
 
-    vcf_file_obj: cyvcf2 VCF file object
-    chromosome: string: chromosome name
-    left_bound/right_bound: integer: 0-based index of reference sequence
-
-    Return list of cyvcf Variant objects
+    Returns
+    -------
+    list of cyvcf.Variant
     """
 
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
@@ -94,12 +91,20 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
 
 def cigar(record):
     """
-    Build the query segment using the cigar tuple given by the bam record so that it aligns with
-    indexes of variants in the VCF and the reference sequence
+    Realign the given query segment to its reference.
 
-    record: bam record from pysam alignment file
+    Rebuild the sequence using the query sequence and cigar tuple from the bam record to realign
+    it with the reference sequence prior to variant matching
 
-    Returns a dna sequence string
+    Parameters
+    ----------
+    record : pysam.AlignedSegment
+        bam record from pysam alignment file
+
+    Returns
+    -------
+    str
+        a sequence of bases representing the realigned DNA sequence
     """
     cigar_tuples = record.cigartuples
 
@@ -154,15 +159,25 @@ def cigar(record):
 
 def phase_detection(variants, segment, record):
     """
-    Takes a segment and a list in the region of the segment and generates a list of
-    strings to represent in order the parent of each variant on the segment
+    Detect haplotype of variants in the given DNA sequence.
 
-    variants: list of cyvcf2 variants in the region of the segment given by the function check_variants(),
-        can include variants that are outside of the region when there is soft clipping
-    segment: string sequence that is the segment built by the function cigar()
-    record: bam record from pysam alignment file
+    Takes a ``segment`` and a list of ``cyvcf2`` variants in the region of the segment 
+    to detect the haplotype of the sequence and generate a list of {'1','2','N'} to represent it
+    in the order of the variants on the segment
 
-    Returns a list of strings ('1', '2', or 'N')
+    Parameters
+    ----------
+    variants : list of cyvcf2.Variant
+        ``cyvcf2`` variants in the bounds of ``segment`` given by ``check_variants()``
+    segment : str
+        realigned sequence built by ``cigar()``
+    record : pysam.AlignedSegment
+        bam record from pysam alignment file
+
+    Returns
+    -------
+    list of {'1','2','N'}
+        list of haplotypes of variants in the bounds of the segment
     """
 
     variant_lst = []
@@ -231,22 +246,31 @@ def phase_detection(variants, segment, record):
     return variant_lst
 
 class Processor(Process):
-    """
-    Inherited class of multiprocessing process that takes in bam sequences from main
-    scheduler and does phase change analysis, outputting bams that fit the arguement
-    criteria to the writer process
-
-    input_queue -- multiprocessing.Queue(), get bam sequences in string form from main
-                    scheduler
-    counter_queue -- multiprocessing.Queue(), put sequence information to be tallied
-    writer_queue -- multiprocessing.Queue(), put sequences that fit the argument
-                    criteria to the writer process
-    args -- dictionary of args from arg_parse()
-    **kwargs -- extra arguements passed onto the super class process
-    """
-
     def __init__(self, input_queue, counter_queue, 
                 writer_queue, args, **kwargs):
+        """
+        Initialize the read pair processor.
+
+        Processor is inherited from ``multiprocessing.Process``; when started it receives pairs of
+        bam sequences through the ``input_queue`` from the scheduler and does phase change analysis, outputting 
+        through ``writer_queue`` bams that fit the user given arguement criteria to ``Writer``.
+        
+        When the scheduler has parsed and distributed all bam sequences, the ``Processor`` receives
+        a ``None`` through the ``input_queue`` and ends its loop and prepares to join.
+
+        Parameters
+        ----------
+        input_queue : multiprocessing.Queue
+            input queue of bam read pairs in string form from scheduler
+        counter_queue : multiprocessing.Queue
+            output queue for result of phase change analysis
+        writer_queue : multiprocessing.Queue
+            output queue for bam read pairs in string form that fulfill the user given criteria
+        args : dictionary of strings
+            dictionary containing all user given arguements compiled by arg_parse()
+        **kwargs 
+            extra parameters passed onto super class ``multiprocessing.Queue()``
+        """
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counter_queue = counter_queue
@@ -257,6 +281,16 @@ class Processor(Process):
         self.args = args
 
     def run(self):
+        """
+        Start the ``Processor``
+
+        ``run()`` is automatically called when the scheduler runs ``Processor.start()``,
+        this begins the operations of both the ``multiprocessing.Process()`` super class and
+        ``Processor``. 
+        
+        See ``check_variants()``, ``cigar()``, and ``phase_detection`` for
+        more information on the analysis process.
+        """
         pair = self.input_queue.get(block=True)
 
         while pair:
@@ -301,16 +335,26 @@ class Processor(Process):
 
     
 class Counter(Process):
-    """
-    Inherited class of multiprocessing process that receives sequence information
-    from Processor processes and tallies them to print to STDOUT or a log file
-
-    input_queue -- multiprocessing.Queue() get sequence information from all Processor processes
-    args -- dictionary of arguements from arg_parse()
-    **kwargs -- extra args that is passed onto super class process
-    """
-
     def __init__(self, input_queue, args, **kwargs):
+        """
+        Intializes the ``Counter`` process.
+
+        Inherited from ``multiprocessing.Process``, ``Counter`` receives sequence information
+        from Processor processes through ``input_queue`` and tallies them to generate a ``tqdm``
+        progress bar in ``STDOUT``. 
+        
+        After being passed a ``None`` from the ``Scheduler, ``Counter``
+        either writes tallied results to ``STDOUT`` or a log depending on the user's arguements.
+        
+        Parameters
+        ----------
+        input_queue : multiprocessing.Queue
+            get sequence information from all ``Processor`` processes
+        args : dictionary of str
+            dictionary containing all user given arguements compiled by arg_parse()
+        **kwargs
+            extra args that are passed onto super class ``Process``
+        """
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
         self.counters = {
@@ -322,6 +366,13 @@ class Counter(Process):
         self.args = args
 
     def run(self):
+        """
+        Start the ``Counter``
+
+        ``run()`` is automatically called when the scheduler runs ``Counter.start()``,
+        this begins the operations of both the ``multiprocessing.Process()`` super class and
+        ``Counter``
+        """
 
         # start timer
         start = time.time()
@@ -386,15 +437,26 @@ class Counter(Process):
 
 
 class Writer(Process):
-    """
-    Inherited class of multiprocessing process that receives bam sequences that fit the
-    critera of the arguements and writes them to a new pysam alignment file
-
-    input_queue -- multiprocessing.Queue() gets filtered bam sequences from Processor processes
-    args -- dictionary of arguements from arg_parse
-    **kwargs -- extra args that is passed onto super class process
-    """
     def __init__(self, input_queue, args, **kwargs):
+        """
+        Intializes the ``Writer`` process.
+
+        Inherited from ``multiprocessing.Process``, ``Writer`` receives bam records
+        in string form from ``Processor`` processes that fulfill the filters given by the user.
+        ``Writer`` converts bam records in string form to ``pysam.AlignedSegment`` objects and
+        writes them to a SAM file. When ``Writer`` receives a ``None`` from the Scheduler, the
+        writing loop is ended and the output file is closed.
+        
+
+        Parameters
+        ----------
+        input_queue : multiprocessing.Queue
+            queue to receive bam record strings from all ``Processor`` processes
+        args : dictionary of str
+            dictionary containing all user given arguements compiled by arg_parse()
+        **kwargs
+            extra args that are passed onto super class ``Process``
+        """
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
 
@@ -404,6 +466,13 @@ class Writer(Process):
         self.header = pysam.AlignmentFile(args['bam'], 'r').header
 
     def run(self):
+        """
+        Start the ``Writer``
+
+        ``run()`` is automatically called when the scheduler runs ``Writer.start()``,
+        this begins the operations of both the ``multiprocessing.Process()`` super class and
+        ``Writer``
+        """
         pair = self.input_queue.get(block=True)
         while pair:
             for str_record in pair:
@@ -420,10 +489,16 @@ class Writer(Process):
 
 def matepair_process():
     """
-    Main process that manages Processors, Counter, and Writer processes and then divides
-    up the bam file sequences equally into the processors to analyze.
+    Start processes, queues, and distribute bam records to ``Processors``
 
-    Gets arguements from command line parsing
+    ``matepair_process`` calls ``arg_parse()`` to parse user given arguments.
+
+    It then initializes and starts ``Processors``, ``Counter``, and ``Writer`` processes/daemons 
+    and then equally distribute the bam records in string form to ``Processors``. 
+    
+    After all bam records have been distributed, ``None`` is passed to ``Processor`` 
+    processes, ``Counter process, and ``Writer`` process to signal their stop and
+    ``close()`` the processes.
     """
     # dictionary of arguements
     args = arg_parser()

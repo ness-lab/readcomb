@@ -14,15 +14,29 @@ except:
     
 def downstream_phase_detection(variants, segment, record):
     """
-    Takes a segment and a list in the region of the segment and generates a list of
-    strings to represent in order the parent of each variant on the segment
+    Detect haplotype of variants in the given DNA sequence.
 
-    snps: list of cyvcf2 variants in the region of the segment given by the function check_variants(),
-        can include variants that are outside of the region when there is soft clipping
-    segment: string sequence that is the segment built by the function cigar()
-    record: bam record from pysam alignment file
+    This function is exactly the same as ``phase_detection`` utilized in ``readcomb-filter``
+    except it also returns the index of variants.
 
-    Returns a list of strings ('1', '2', or 'N')
+    ``downstream_phase_detection()`` takes a ``segment`` and a list of ``cyvcf2`` 
+    variants in the region of the segment to detect the haplotype of the sequence and 
+    generate a list of tuples in the form ``[({'1', '2', 'N'}, variant_index), ...]`` to represent 
+    haplotypes in the order of the variants on the segment.
+
+    Parameters
+    ----------
+    variants : list of cyvcf2.Variant
+        ``cyvcf2`` variants in the bounds of ``segment`` given by ``check_variants()``
+    segment : str
+        realigned sequence built by ``cigar()``
+    record : pysam.AlignedSegment
+        bam record from pysam alignment file
+
+    Returns
+    -------
+    list of tuples
+        list of haplotypes of variants and their index in the bounds of the segment
     """
 
     detection_results = []
@@ -90,11 +104,24 @@ def downstream_phase_detection(variants, segment, record):
     return detection_results
 
 class Pair():
-    '''
-    bam read pair object
-    '''
     def __init__(self, record1, record2, vcf_filepath):
+        """
+        Initialize a ``Pair`` object
 
+        It is highly recommended to use ``classification.pairs_creation`` to create pairs by
+        parsing through a SAM/BAM file.
+
+        ``record1`` and ``record2`` are reorded so that they are in increasing sequential order
+
+        Parameters
+        ----------
+        record1: pysam.AlignedSegment
+            one of the bam sequences in a read pair
+        record2: pysam.AlignedSegment
+            bam sequence in a read pair corresponding to the one in ``record1``
+        vcf_filepath: str
+            filepath to VCF file that contains variants for ``record1`` and ``record2``
+        """
         # put pairs in order by reference_start of the bam sequences
         if record1.reference_start < record2.reference_start:
             self.rec_1 = record1
@@ -106,13 +133,27 @@ class Pair():
         self.vcf_filepath = vcf_filepath
 
     def __str__(self):
+        """
+        Generate string representation of ``Pair`` class.
+
+        This function overwites the built-in ``__str__`` function of ``Pair``. The ``__str__`` function
+        is called whenever a user prints a ``Pair`` object or converts the object to a ``str``. ``Pair`` 
+        has two different states, before and after calling ``classify()``, so two different string
+        representations are needed.
+
+        Returns
+        -------
+        string : str
+            string representation of the ``Pair`` object
+        """
         if hasattr(self, 'call'):
             string = f'Record name: {self.rec_1.query_name} \n' + \
-                    f'Record1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
+                    f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
                     f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
-                    f'Record2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
+                    f'Read2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
                     f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
                     f'VCF: {self.vcf_filepath} \n' + \
+                    f'Unmatched Variant(s): {self.no_match} \n' + \
                     f'Condensed: {self.condensed} \n' + \
                     f'Call: {self.call} \n' + \
                     f'Condensed Masked: {self.masked_condensed} \n' + \
@@ -120,38 +161,80 @@ class Pair():
                     f'Midpoint: {self.get_midpoint()}'
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
-                    f'Record1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
+                    f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
                     f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
-                    f'Record2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
+                    f'Read2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
                     f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
                     f'VCF: {self.vcf_filepath}'
         
         return string
     
     def package(self):
-        '''
-        convert bam sequences to strings so that they can be passed through queues/pipes
-        '''
-        self.rec_1 = self.rec_1.to_string()
-        self.rec_2 = self.rec_2.to_string()
+        """
+        Convert ``self.rec_1`` and ``self.rec_2`` from ``pysam.AlignedSegment`` to ``str``
+
+        The user may want to implement multiprocessing to decrease the amount of time to classify all
+        reads in a SAM/BAM file. ``self.rec_1`` and self.``rec_2`` and all ``pysam.AlignedSegment`` objects 
+        are not pickleable and cannot be passed through a ``multiprocessing.Queue``. Instead of directly handling
+        BAM/SAM strings, users can choose to create a ``Pair``, call ``package`` to convert the records to strings
+        using the ``to_string()`` function from ``pysam`` and pass the ``Pair`` object through a ``Queue``.
+        """
+        if type(self.rec_1) == type(pysam.AlignedSegment()) and type(self.rec_2) == type(pysam.AlignedSegment()):
+            self.rec_1 = self.rec_1.to_string()
+            self.rec_2 = self.rec_2.to_string()
 
     def unpackage(self, header):
-        '''
-        convert bam strings to pysam bam objects, requires the header of the bam file that
-        the string/sequence came from
-        '''
-        self.rec_1 = pysam.AlignedSegment.fromstring(self.rec_1, header)
-        self.rec_2 = pysam.AlignedSegment.fromstring(self.rec_2, header)
+        """
+        Convert ``self.rec_1`` and ``self.rec_2`` from ``str`` to ``pysam.AlignedSegment``
+
+        If the user is implementing multiprocessing to decrease the amount of time to classify all
+        reads in a SAM/BAM file, the ``package()`` function should be called on ``Pair`` to convert
+        ``self.rec_1`` and ``self.rec_2`` to ``str`` and passed to a subprocess. After the subprocess
+        receives the packaged ``Pair``, it should be unpackaged using this function. 
+        ``pysam.AlignedSegment.fromstring()`` also requires the ``pysam.AlignmentHeader`` object
+        which can be obtained from calling ``.header`` on the ``pysam.AlignmentFile`` object
+        that this ``Pair`` was parsed from using ``pair_creation()``.
+
+        Parameters
+        ----------
+        header : pysam.AlignmentHeader
+            ``pysam.AlignmentHeader`` of the ``pysam.AlignmentFile`` associated with this ``Pair``
+        """
+        if type(self.rec_1) == type('string') and type(self.rec_1) == type('string'):
+            self.rec_1 = pysam.AlignedSegment.fromstring(self.rec_1, header)
+            self.rec_2 = pysam.AlignedSegment.fromstring(self.rec_2, header)
 
     def classify(self, masking=70, vcf=None):
-        '''
-        Does phase change analysis on bam pair associated with this pair object and classifies
-        them depending on the results, providing both a classification on the whole sequence
-        and masked classification when bases of argument masking length is ignored at both ends
+        """
+        Determine the type of recombination event that occursed in this read pair.
 
-        Takes in optional vcf arguement to take in a cyvcf2.VCF object for use in multiprocessing/threading
-        Note: Do not use the same VCF object across threads/processes
-        '''
+        ``classify()`` does phase change analysis similar to ``readcomb-filter`` with addtional
+        steps to classify the type of recombination event. See ``readcomb.check_variants()``, 
+        ``readcomb.cigar()``, and ``downstream_phase_detection`` for more information on the 
+        analysis process. 
+        
+        Classification is done on the haplotypes present in the full read pair
+        and also when the beginning and end are shortened by ``masking`` bases as phase changes
+        close to the start and end of a read pair are difficult to determine if they are crossovers
+        or gene conversions. The two different classifications allows a more nuanced call on the 
+        phase change type present in the pair.
+        
+        ``classify()`` also takes in optional ``vcf`` for a ``cyvcf2.VCF`` object. It is highly
+        recommended to pass in a pre-initialized ``VCF`` object when large amounts of ``Pair``
+        objects are being classified as the creation of ``VCF`` parsers greatly affects
+        performance and tends to be less reliable when large amounts of parsers are created. 
+        
+        Do not use the same ``cyvcf2.VCF`` parser across multiple processes/threads as it leads to
+        errors involving file access permissions. Use a dedicated ``cyvcf2.VCF`` parser for
+        each process/thread instead.
+
+        Parameters
+        ----------
+        masking : int, default 70
+            number of bases to be ignored when determing the ``masked_classification``
+        vcf: cyvcf2.VCF, optional
+            pre-initialized ``cyvcf2.VCF`` for this ``Pair`` to use when classifying, highly recommended        
+        """
         self.segment_1 = cigar(self.rec_1)
         self.segment_2 = cigar(self.rec_2)
 
@@ -168,6 +251,9 @@ class Pair():
 
         self.detection_1 = downstream_phase_detection(self.variants_1, self.segment_1, self.rec_1)
         self.detection_2 = downstream_phase_detection(self.variants_2, self.segment_2, self.rec_2)
+
+        # set no_match variable if there are unmatched variants
+        self.no_match = True if 'N' in self.detection_1 or 'N' in self.detection_2 else False
 
         # simplification of results
         # [(haplotype, beginning, end), ...]
@@ -197,13 +283,11 @@ class Pair():
                 if variant == self.detection_2[-1]:
                     self.condensed[-1][2] = self.rec_2.reference_start + self.rec_2.query_alignment_length
 
-        # create condensed
-        haplotypes = [tupl[0] for tupl in self.condensed]
+        # create list of just haplotype information no range from condensed
+        haplotypes = [tupl[0] for tupl in self.condensed if tupl[0] != 'N']
 
         # classify condensed
-        if 'N' in haplotypes:
-            self.call = 'no_match'
-        elif len(haplotypes) == 2:
+        if len(haplotypes) == 2:
             self.call = 'ambiguous_cross_over'
         elif len(haplotypes) == 3:
             self.call = 'gene_conversion'
@@ -224,31 +308,30 @@ class Pair():
         mask_start = self.rec_1.reference_start + masking
         mask_end = self.rec_2.reference_start + self.rec_2.query_alignment_length - masking
 
-        # created masked_condensed
+        # create masked_condensed from condensed
         # [(haplotype, beginning, end), ...]
         self.masked_condensed = []
 
         for phase in self.condensed:
             # one phase contains both mask start and end
             if phase[1] < mask_start and mask_end < phase[2]:
-                self.masked_condensed.append((phase[0], mask_start, mask_end))
+                self.masked_condensed.append([phase[0], mask_start, mask_end])
             # phase contains only mask start
             elif phase[1] < mask_start and mask_start < phase[2]:
-                self.masked_condensed.append((phase[0], mask_start, phase[2]))
+                self.masked_condensed.append([phase[0], mask_start, phase[2]])
             # phase contains only mask end
             elif phase[1] < mask_end and mask_end < phase[2]:
-                self.masked_condensed.append((phase[0], phase[1], mask_end))
+                self.masked_condensed.append([phase[0], phase[1], mask_end])
             # phase is in the middle
             elif mask_start < phase[1] and phase[2] < mask_end:
                 self.masked_condensed.append(phase)
                      
 
-        # classify masked_condensed
-        haplotypes = [tupl[0] for tupl in self.masked_condensed]
+        # create list of just haplotype information no range from condensed
+        haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
 
-        if 'N' in haplotypes:
-            self.masked_call = 'no_match'
-        elif len(haplotypes) == 2:
+        # classify masked_condensed
+        if len(haplotypes) == 2:
             self.masked_call = 'unambiguous_cross_over'
         elif len(haplotypes) == 3:
             self.masked_call = 'gene_conversion'
@@ -257,16 +340,38 @@ class Pair():
         else:
             self.masked_call = 'no_phase_change'
 
-    def get_midpoint(self):
-        '''
-        Returns the midpoint of a pair of reads
+        # convert haplotypes 1/2/N to VCF sample names
+        samples = vcf.samples
 
-        The midpoint of a phase change is halfway between the two closets variants
-        that signify a phase chang event. For gene conversions, it is halfway between
+        for tupl in self.condensed:
+            if tupl[0] == '1':
+                tupl[0] = samples[0]
+            elif tupl[0] == '2':
+                tupl[0] = samples[1]
+
+        for tupl in self.masked_condensed:
+            if tupl[0] == '1':
+                tupl[0] = samples[0]
+            elif tupl[0] == '2':
+                tupl[0] = samples[1]
+
+    def get_midpoint(self):
+        """
+        Determine and return the midpoint of ``Pair``
+
+        The midpoint of a read pair with no phase changes is halfway between the start
+        of the first read and end of second read.
+        
+        The midpoint of a read pair with a phase change is halfway between the two closets 
+        variants that signify a phase change event. For gene conversions, it is halfway between
         the two outer variants of the group of 3. This logic extends to read pairs
-        with complex haplotypes. If there are no phase changes, the midpoint is
-        halfway between the start of the 1st read and the end of the 2nd read
-        '''
+        with complex haplotypes. 
+
+        Returns
+        -------
+        midpoint : int
+            the middle point of the phase change event of the ``Pair``
+        """
 
         # return midpoint if it's already been called
         if hasattr(self, 'midpoint'):
@@ -297,7 +402,29 @@ class Pair():
 
 
 def pairs_creation(bam_filepath, vcf_filepath):
+    """
+    Parses through a BAM/SAM file and generates ``Pair`` objects for read pairs.
 
+    Given a read name sorted BAM/SAM file, ``pairs_creation`` creates ``Pair``
+    objects with read pairs. 
+    
+    It is recommended to use this function to create ``Pair`` objects for an entier
+    BAM/SAM file instead of manually creating the ``Pair``. It is also recommended
+    to use ``pairs_creation`` on SAM files that have already been filtered by
+    ``readcomb-filter`` instead of full BAMs/SAMs. 
+
+    Parameters
+    ----------
+    bam_filepath : str
+        filepath of BAM/SAM file processed with ``readcomb-bamprep``
+    vcf_filepath : str
+        filepath of VCF files that contain variants for reads in ``bam_filepath``
+
+    Returns
+    -------
+    pairs : list of ``Pair``
+        list containing all reads from ``bam_filepath`` in the form of ``Pair`` objects 
+    """
     bam = pysam.AlignmentFile(bam_filepath, 'r')
 
     pairs = []

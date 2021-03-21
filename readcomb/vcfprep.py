@@ -35,14 +35,15 @@ def arg_parser():
 
 def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
     """
-    Iterate through given parental VCF and remove records based on provided
-    filters. All records where parent1 allele is the same as parent2
+    Iterate through parental VCF and remove records by given filters. 
+    
+    All records where parent1 allele is the same as parent2
     ('uninformative sites') are automatically removed.
 
-    Breaks if >2 samples in VCF (should just be 2 parents)
+    Raises ValueError if >2 samples in VCF (should just be 2 parents)
 
     Parameters
-    -------
+    ----------
     vcf : str
         path to input VCF
     snps_only : bool

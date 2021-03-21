@@ -23,7 +23,7 @@ pip install readcomb
 - [pysam](https://pysam.readthedocs.io/en/latest/api.html) - Interface for SAM and BAM files and provides SAM and BAM objects
 - [pandas](https://pandas.pydata.org/) - Support for data tables
 - [tqdm](https://tqdm.github.io/) - Provides updating progress bars for command line programs
-- [samtools](http://www.htslib.org/)
+- [samtools](http://www.htslib.org/) - Used for preprocessing of VCF and BAM files
 
 # Usage:
 
@@ -79,20 +79,29 @@ Optional arguments:
 Python module for detailed classification of sequences containing phase changes
 
 ```python
-import readcomb.classification as rc
+>>> import readcomb.classification as rc
+>>> from cyvcf2 import VCF
 
-# generate list of bam read pairs
-pairs = rc.pairs_creation(bam_filepath, vcf_filepath)
+>>> pairs = rc.pairs_creation(bam_filepath, vcf_filepath)     # generate list of Pair objects
+>>> cyvcf_object = VCF(vcf_filepath)                          # cyvcf2 file object
 
-# or use a for loop
-for pair in pairs:
-    pair.classify() 
+>>> print(pairs[0])
+Record name: chromosome_1-199370 
+Read1: chromosome_1:499417-499667 
+Read2: chromosome_1:499766-500016 
+VCF: vcf_filepath
 
-# get classification of first read pair
-pairs[0].call
-# > gene_conversion
-pairs[0].masked_call
-# > no_phase_change
+>>> pairs[0].classify(cyvcf_object)
+>>> print(pairs[0])
+Record name: chromosome_1-199370 
+Read1: chromosome_1:499417-499667 
+Read2: chromosome_1:499766-500016 
+VCF: vcf_filepath
+Unmatched Variant(s): False 
+Condensed: [['CC2936', 499417, 499626], ['CC2935', 499626, 499736], ['CC2936', 499736, 500016]] 
+Call: gene_conversion 
+Condensed Masked: [['CC2936', 499487, 499626], ['CC2935', 499626, 499736], ['CC2936', 499736, 499946]] 
+Call Masked: gene_conversion 
 ```
 ## License
 

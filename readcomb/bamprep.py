@@ -46,6 +46,7 @@ def arg_parser():
 def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
     """
     Prepare BAM for phase change detection with readcomb.
+    
     Script will:
     1. Apply filters (proper pair, not secondary, not supplementary)
     2. Sort by read name instead of position (samtools sort)
@@ -55,7 +56,7 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
     the extension will have been changed. 
     
     Parameters
-    -------
+    ----------
     fname : str
         path to input SAM/BAM
     outdir : str
