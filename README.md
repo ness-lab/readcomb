@@ -82,6 +82,8 @@ Python module for detailed classification of sequences containing phase changes
 >>> import readcomb.classification as rc
 >>> from cyvcf2 import VCF
 
+>>> bam_filepath = 'data/example_sequences.bam'
+>>> vcf_filepath = 'data/example_variants.vcf.gz'
 >>> pairs = rc.pairs_creation(bam_filepath, vcf_filepath)     # generate list of Pair objects
 >>> cyvcf_object = VCF(vcf_filepath)                          # cyvcf2 file object
 
@@ -89,14 +91,14 @@ Python module for detailed classification of sequences containing phase changes
 Record name: chromosome_1-199370 
 Read1: chromosome_1:499417-499667 
 Read2: chromosome_1:499766-500016 
-VCF: vcf_filepath
+VCF: data/example_variants.vcf.gz
 
->>> pairs[0].classify(cyvcf_object)
+>>> pairs[0].classify(cyvcf_object)                           # run classification algorithm
 >>> print(pairs[0])
 Record name: chromosome_1-199370 
 Read1: chromosome_1:499417-499667 
 Read2: chromosome_1:499766-500016 
-VCF: vcf_filepath
+VCF: data/example_variants.vcf.gz
 Unmatched Variant(s): False 
 Condensed: [['CC2936', 499417, 499626], ['CC2935', 499626, 499736], ['CC2936', 499736, 500016]] 
 Call: gene_conversion 

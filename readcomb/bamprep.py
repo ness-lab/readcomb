@@ -14,13 +14,18 @@ for the path - recommended)
 
 import os
 import re
+import sys
 import argparse
 import subprocess
-import pysam
-from tqdm import tqdm
+
+class readcomb_parser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write(f'error: {message}\n')
+        self.print_help()
+        sys.exit(1)
 
 def arg_parser():
-    parser = argparse.ArgumentParser(
+    parser = readcomb_parser(
         description='prep SAM/BAM for phase change detection', 
         usage='readcomb-bamprep [options]')
 
@@ -37,13 +42,11 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
-    args = parser.parse_args()
+    return parser
 
-    return args.bam, args.samtools, args.threads, args.index_csi, \
-        args.no_progress, args.outdir
-
-def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
+def bamprep(args):
     """
     Prepare BAM for phase change detection with readcomb.
     
@@ -57,25 +60,19 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
     
     Parameters
     ----------
-    fname : str
-        path to input SAM/BAM
-    outdir : str
-        path to directory to write to (optional)
-
-    Returns
-    -------
-    None
+    args : Namespace
+        Namespace containing all user given arguements compiled by arg_parse()
     """
     # check extension
-    match = re.search('\.[sb]am$', fname)
+    match = re.search('\.[sb]am$', args.bam)
     if match:
         extension = match.group()
-        basename = fname[:fname.find(extension)]
+        basename = args.bam[:args.bam.find(extension)]
     else:
         raise ValueError('input file is not SAM or BAM - make sure extension is correct')
 
     # get samtools path if not specified
-    if not samtools:
+    if not args.samtools:
         samtools_check_cmd = 'which samtools'
         proc = subprocess.Popen(samtools_check_cmd.split(' '),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -85,43 +82,43 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
                     either ensure samtools is in your PATH or specify a
                     samtools binary using the --samtools argument""")
         else:
-            samtools = out.decode('utf-8').rstrip('\n')
+            args.samtools = out.decode('utf-8').rstrip('\n')
 
     # format args
-    if outdir:
-        if not outdir.endswith('/'):
-            outdir += '/'
-    elif not outdir:
-        outdir = ''
+    if args.outdir:
+        if not args.outdir.endswith('/'):
+            args.outdir += '/'
+    elif not args.outdir:
+        args.outdir = ''
         print('[readcomb] no outdir specified, saving to current working directory')
 
     # filter out non proper pair, supplementary, and secondary reads
     print('[readcomb] Filtering...') 
-    filter_pos_cmd = '{s} view -O bam '.format(s=samtools)
+    filter_pos_cmd = '{s} view -O bam '.format(s=args.samtools)
     filter_pos_cmd += '-f 0x2 -F 0x100 -F 0x800 '
-    filter_pos_cmd += '-o {base}.temp.filtered.bam {fname}'.format(
-            s=samtools, out=outdir, base=basename, fname=fname)
+    filter_pos_cmd += '-o {base}.temp.filtered.bam {bam}'.format(
+            s=args.samtools, out=args.outdir, base=basename, bam=args.bam)
     proc = subprocess.run(filter_pos_cmd.split(' '))
     proc.check_returncode() # raises CalledProcessError if proc failed
 
-    if not no_progress:
+    if not args.no_progress:
     # sort positionally for bai file creation
         print('[readcomb] Positionally sorting for bai creation...')
-        sort_pos_cmd = '{s} sort -O bam '.format(s=samtools)
-        if threads:
-            sort_pos_cmd += '-@{n} '.format(n=threads)
+        sort_pos_cmd = '{s} sort -O bam '.format(s=args.samtools)
+        if args.threads:
+            sort_pos_cmd += '-@{n} '.format(n=args.threads)
         sort_pos_cmd += '-o {base}.sorted.bam {base}.temp.filtered.bam'.format(base=basename)
         proc = subprocess.run(sort_pos_cmd.split(' '))
         proc.check_returncode()
 
         # create bai file
-        if index_csi:
+        if args.index_csi:
             idx_type = '.csi'
         else:
             idx_type = '.bai'
         print('[readcomb] Creating {} index file...'.format(idx_type))
         index_cmd = '{s} index {base}.sorted.bam {out}{base}.sorted{idx}'.format(
-                s=samtools, out=outdir, base=basename, idx=idx_type)
+                s=args.samtools, out=args.outdir, base=basename, idx=idx_type)
         proc = subprocess.run(index_cmd.split(' '))
         proc.check_returncode()
 
@@ -133,11 +130,11 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
 
     # sort by name and ensure file is in BAM format
     print('[readcomb] Creating read name sorted file...')
-    sort_cmd = '{s} sort -n -O bam '.format(s=samtools)
-    if threads:
-        sort_cmd += '-@{n} '.format(n=threads)
+    sort_cmd = '{s} sort -n -O bam '.format(s=args.samtools)
+    if args.threads:
+        sort_cmd += '-@{n} '.format(n=args.threads)
     sort_cmd += '-o {out}{base}.sorted.bam {base}.temp.filtered.bam'.format(
-            out=outdir, base=basename)
+            out=args.outdir, base=basename)
     proc = subprocess.run(sort_cmd.split(' '))
     proc.check_returncode() 
 
@@ -150,11 +147,14 @@ def bamprep(fname, samtools, threads, index_csi, no_progress, outdir):
 
 
 def main():
-    bam, samtools, threads, index_csi, no_progress, outdir = arg_parser()
-    if samtools:
-        if not os.path.isfile(samtools):
-            raise ValueError('ERROR: No samtools binary found at {}'.format(samtools))
-    bamprep(bam, samtools, threads, index_csi, no_progress, outdir)
+    parser = arg_parser()
+    # Namespace of arguements
+    args = parser.parse_args()
+    
+    if args.samtools:
+        if not os.path.isfile(args.samtools):
+            raise ValueError('ERROR: No samtools binary found at {}'.format(args.samtools))
+    bamprep(args)
     print('[readcomb] Complete.')
 
 if __name__ == '__main__':

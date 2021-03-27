@@ -5,6 +5,6 @@ build
 dist
 readcomb.egg-info
 
-readcomb/recomb_diagnosis.sam
 tests/bams/*
 tests/vcfs/*
+tests/output/*

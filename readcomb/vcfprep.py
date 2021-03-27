@@ -6,12 +6,19 @@ filters if needed
 
 import subprocess
 import argparse
+import sys
 from cyvcf2 import VCF
 from cyvcf2 import Writer
 from tqdm import tqdm
 
+class readcomb_parser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write(f'error: {message}\n')
+        self.print_help()
+        sys.exit(1)
+
 def arg_parser():
-    parser = argparse.ArgumentParser(
+    parser = readcomb_parser(
         description='prep parental VCF for phase change detection', 
         usage='readcomb-vcfprep [options]')
 
@@ -27,13 +34,11 @@ def arg_parser():
             type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
             type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
-    args = parser.parse_args()
+    return parser
 
-    return args.vcf, args.snps_only, args.indels_only, \
-            args.no_hets, args.min_GQ, args.out
-
-def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
+def vcfprep(args):
     """
     Iterate through parental VCF and remove records by given filters. 
     
@@ -44,18 +49,8 @@ def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
 
     Parameters
     ----------
-    vcf : str
-        path to input VCF
-    snps_only : bool
-        whether or not to only keep SNPs
-    indels_only : bool
-        whether or not to only keep indels
-    no_hets : bool
-        whether or not to remove het calls
-    min_GQ : int
-        minimum GQ value required to consider sites
-    out : str
-        path to file to write to
+    args : Namespace
+        Namespace containing all user given arguements compiled by arg_parse()
 
     Returns
     -------
@@ -64,15 +59,15 @@ def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
     kept_count : int
         number of records that passed filters
     """
-    vcf_in = VCF(vcf)
+    vcf_in = VCF(args.vcf)
 
     if len(vcf_in.samples) > 2:
         raise ValueError('more than 2 parental samples in input VCF')
-    if snps_only and indels_only:
+    if args.snps_only and args.indels_only:
         raise ValueError('both --snps_only and --indels_only provided. pick one or neither!')
 
-    if outfile.endswith('.gz'):
-        outfile = outfile.replace('.gz', '')
+    if args.out.endswith('.gz'):
+        outfile = args.out.replace('.gz', '')
     vcf_out = Writer(outfile, vcf_in)
     vcf_out.write_header()
 
@@ -85,19 +80,19 @@ def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
             continue
 
         # SNP filter
-        if snps_only and not record.is_snp:
+        if args.snps_only and not record.is_snp:
             continue
 
         # indel filter
-        if indels_only and not record.is_indel:
+        if args.indels_only and not record.is_indel:
             continue
 
         # heterozygote call filter
-        if no_hets and record.num_het != 0:
+        if args.no_hets and record.num_het != 0:
             continue
 
         # genotype quality filter
-        if not all(record.gt_quals >= min_GQ):
+        if not all(record.gt_quals >= args.min_GQ):
             continue
 
         # ensure parental alleles differ
@@ -112,19 +107,21 @@ def vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, outfile):
 
 
 def main():
-    vcf, snps_only, indels_only, no_hets, min_GQ, out = arg_parser()
-    print('[readcomb] filtering {}'.format(vcf))
-    if min_GQ < 30:
+    parser = arg_parser()
+    args = parser.parse_args()
+    
+    print('[readcomb] filtering {}'.format(args.vcf))
+    if args.min_GQ < 30:
         print('[readcomb] WARNING: min GQ below 30 selected')
-    total_count, kept_count = vcfprep(vcf, snps_only, indels_only, no_hets, min_GQ, out)
+    total_count, kept_count = vcfprep(args)
     print('[readcomb] Complete.')
     print('[readcomb] {} of {} records retained.'.format(kept_count, total_count))
-    if out.endswith('.gz'):
+    if args.out.endswith('.gz'):
         print('[readcomb] compressing outfile...')
-        proc_bgzip = subprocess.Popen(['bgzip', out.replace('.gz', '')])
+        proc_bgzip = subprocess.Popen(['bgzip', args.out.replace('.gz', '')])
         stdout, stderr = proc_bgzip.communicate()
         print('[readcomb] creating tabix index...')
-        proc_tabix = subprocess.Popen(['tabix', out])
+        proc_tabix = subprocess.Popen(['tabix', args.out])
         stdout, stderr = proc_tabix.communicate()
         print('[readcomb] done.')
 

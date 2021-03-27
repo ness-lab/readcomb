@@ -16,8 +16,14 @@ from multiprocessing import Process
 from cyvcf2 import VCF
 from tqdm import tqdm
 
+class readcomb_parser(argparse.ArgumentParser):
+    def error(self, message):
+        sys.stderr.write(f'error: {message}\n')
+        self.print_help()
+        sys.exit(1)
+
 def arg_parser():
-    parser = argparse.ArgumentParser(
+    parser = readcomb_parser(
         description='filter BAM for reads containing phase changes',
         usage='readcomb-filter [options]')
 
@@ -34,22 +40,15 @@ def arg_parser():
                         help='Read filtering mode (default phase_change) \
                              [phase_change|no_match]')
 
-    parser.add_argument('-l', '--log', required=False,
+    parser.add_argument('-l', '--log', required=False, default=None,
                         type=str, help='Filename for log metric output [optional]')
 
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
                         help='File to write to (default recomb_diagnosis)')
 
-    args = parser.parse_args()
+    parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
-    return {
-        'bam': args.bam,
-        'vcf': args.vcf,
-        'processes': args.processes,
-        'mode': args.mode,
-        'log': args.log,
-        'out': args.out,
-        }
+    return parser
 
 class SilentVCF:
     # helper class for check_variants that silences cyvcf2 warnings
@@ -266,8 +265,8 @@ class Processor(Process):
             output queue for result of phase change analysis
         writer_queue : multiprocessing.Queue
             output queue for bam read pairs in string form that fulfill the user given criteria
-        args : dictionary of strings
-            dictionary containing all user given arguements compiled by arg_parse()
+        args : Namespace
+            Namespace containing all user given arguements compiled by arg_parse()
         **kwargs 
             extra parameters passed onto super class ``multiprocessing.Queue()``
         """
@@ -275,9 +274,9 @@ class Processor(Process):
         self.input_queue = input_queue
         self.counter_queue = counter_queue
         self.writer_queue = writer_queue
-        self.vcf_file_obj = VCF(args['vcf'])
+        self.vcf_file_obj = VCF(args.vcf)
         # header used for converting bam string to bam object
-        self.header = pysam.AlignmentFile(args['bam'], 'r').header
+        self.header = pysam.AlignmentFile(args.bam, 'r').header
         self.args = args
 
     def run(self):
@@ -321,13 +320,13 @@ class Processor(Process):
             if '1' in variant_lst and '2' in variant_lst:
                 self.counter_queue.put('phase_change')
 
-                if 'phase_change' in self.args['mode']:
+                if 'phase_change' in self.args.mode:
                     self.writer_queue.put(pair)
                 
             if 'N' in variant_lst:
                 self.counter_queue.put('no_match')
 
-                if 'no_match' in self.args['mode']:
+                if 'no_match' in self.args.mode:
                     self.writer_queue.put(pair)
 
             pair = self.input_queue.get(block=True)
@@ -350,8 +349,8 @@ class Counter(Process):
         ----------
         input_queue : multiprocessing.Queue
             get sequence information from all ``Processor`` processes
-        args : dictionary of str
-            dictionary containing all user given arguements compiled by arg_parse()
+        args : Namespace
+            Namespace containing all user given arguements compiled by arg_parse()
         **kwargs
             extra args that are passed onto super class ``Process``
         """
@@ -378,8 +377,8 @@ class Counter(Process):
         start = time.time()
 
         # create tqdm iteration counter if no bars
-        if 'pair_count' in self.args:
-            self.progress = tqdm(total=self.args['pair_count'])
+        if self.args.pair_count:
+            self.progress = tqdm(total=self.args.pair_count)
         else:
             self.progress = tqdm()
 
@@ -409,11 +408,14 @@ class Counter(Process):
         print('time taken: {}'.format(runtime))
         
         # write to log if argument defined
-        if self.args["log"]:
+        if self.args.log:
             # determine if we are adding to file or creating new log file
-            needs_header = False if os.path.isfile(self.args['log']) else True
+            needs_header = False if os.path.isfile(self.args.log) else True
 
-            with open(self.args["log"], 'a') as f:
+            # convert argparse namespace to dictionary to be more easily manipulated
+            args_dict = vars(self.args)
+
+            with open(args_dict, 'a') as f:
                 if needs_header:
                     fieldnames = ['time',
                                 'phase_change_reads',
@@ -422,7 +424,7 @@ class Counter(Process):
                                 'no_variant_reads', 
                                 'seqs',
                                 'time_taken']
-                    fieldnames.extend(sorted(self.args.keys()))
+                    fieldnames.extend(sorted(args_dict.keys()))
                     f.write(','.join(fieldnames) + '\n')
 
                 out_values = [datetime.datetime.now(), 
@@ -432,7 +434,7 @@ class Counter(Process):
                             self.counters['seq'] - self.counters['seq_with_variants'],
                             self.counters["seq"],
                             runtime]
-                out_values.extend([self.args[key] for key in sorted(self.args.keys())])
+                out_values.extend([args_dict[key] for key in sorted(args_dict.keys())])
                 f.write(','.join([str(n) for n in out_values]) + '\n')
 
 
@@ -452,18 +454,18 @@ class Writer(Process):
         ----------
         input_queue : multiprocessing.Queue
             queue to receive bam record strings from all ``Processor`` processes
-        args : dictionary of str
-            dictionary containing all user given arguements compiled by arg_parse()
+        args : Namespace
+            Namespace containing all user given arguements compiled by arg_parse()
         **kwargs
             extra args that are passed onto super class ``Process``
         """
         Process.__init__(self, **kwargs)
         self.input_queue = input_queue
 
-        pysam_obj = pysam.AlignmentFile(args['bam'], 'r')
-        self.out = pysam.AlignmentFile(args['out'] + '.sam', 'wh', 
+        pysam_obj = pysam.AlignmentFile(args.bam, 'r')
+        self.out = pysam.AlignmentFile(args.out + '.sam', 'wh', 
                                         template=pysam_obj)
-        self.header = pysam.AlignmentFile(args['bam'], 'r').header
+        self.header = pysam.AlignmentFile(args.bam, 'r').header
 
     def run(self):
         """
@@ -500,25 +502,26 @@ def matepair_process():
     processes, ``Counter process, and ``Writer`` process to signal their stop and
     ``close()`` the processes.
     """
-    # dictionary of arguements
-    args = arg_parser()
+    parser = arg_parser()
+    args = parser.parse_args()
 
     # idxstats on bam/bai file
-    if not os.path.isfile(args['bam'] + '.bai'):
+    if not os.path.isfile(args.bam + '.bai'):
         print('Bai file not found, continuing without progress bars')
+        args.pair_count = None
     else:
-        stats = subprocess.check_output(['samtools', 'idxstats', args['bam']])
+        stats = subprocess.check_output(['samtools', 'idxstats', args.bam])
         stats_table = pd.read_csv(BytesIO(stats), sep='\t', 
                                     names=['chrom', 'length', 'map_reads', 'unmap_reads'])
         pairs_sum = stats_table['map_reads'].sum()
-        args['pair_count'] = int(pairs_sum / 2) # divide 2 to get pairs
+        args.pair_count = int(pairs_sum / 2) # divide 2 to get pairs
 
         if pairs_sum % 2 != 0:
             raise ValueError('Preprocessing of bam file went wrong')
 
 
     # pysam argument object
-    bam = pysam.AlignmentFile(args['bam'], 'r')
+    bam = pysam.AlignmentFile(args.bam, 'r')
 
     print('Creating processes')
     # set up counter and writer
@@ -534,7 +537,7 @@ def matepair_process():
     processes = []
     input_queues = []
     # set up processes
-    for i in range(args['processes']):
+    for i in range(args.processes):
         input_queue = Queue()
         input_queues.append(input_queue)
         processes.append(Processor(input_queue, count_input, 
@@ -564,7 +567,7 @@ def matepair_process():
             input_queues[process_idx].put(pair)
 
             # give record to next process
-            if process_idx < args['processes'] - 1:
+            if process_idx < args.processes - 1:
                 process_idx += 1
             else:
                 process_idx = 0 

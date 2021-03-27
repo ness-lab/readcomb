@@ -7,7 +7,8 @@ try:
     from readcomb.filter import check_variants
     from readcomb.filter import cigar
 except:
-    print('it is not recommended to directly run filter.py instead of installing readcomb')
+    print('WARNING: readcomb is not installed')
+    print('Use command: pip install readcomb')
     from filter import check_variants
     from filter import cigar
     
@@ -372,6 +373,9 @@ class Pair():
         midpoint : int
             the middle point of the phase change event of the ``Pair``
         """
+        # give error if Pair object is packaged
+        if type(self.rec_1) == type('string') or type(self.rec_2) == type('string'):
+            raise TypeError('cannot classify if Pair object is not unpackaged yet')
 
         # return midpoint if it's already been called
         if hasattr(self, 'midpoint'):
