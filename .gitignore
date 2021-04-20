@@ -8,3 +8,5 @@ readcomb.egg-info
 tests/bams/*
 tests/vcfs/*
 tests/output/*
+tests/test_classification.py
+tests/test_filter.py

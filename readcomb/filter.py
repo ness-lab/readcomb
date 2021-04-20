@@ -45,6 +45,9 @@ def arg_parser():
 
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
                         help='File to write to (default recomb_diagnosis)')
+    
+    parser.add_argument('-q', '--quality', required=False, type=int, default=30,
+                        help='Filter quality for individual bases in a sequence, default is 30')
 
     parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
@@ -156,7 +159,7 @@ def cigar(record):
 
     return ''.join(segment)
 
-def phase_detection(variants, segment, record):
+def phase_detection(variants, segment, record, args):
     """
     Detect haplotype of variants in the given DNA sequence.
 
@@ -172,6 +175,8 @@ def phase_detection(variants, segment, record):
         realigned sequence built by ``cigar()``
     record : pysam.AlignedSegment
         bam record from pysam alignment file
+    args : Namespace
+        Namespace containing all user given arguements compiled by arg_parse()
 
     Returns
     -------
@@ -202,12 +207,27 @@ def phase_detection(variants, segment, record):
         # ignore if variant is before sequence
         if idx < 0:
             continue
+
+        # check if variant is outside of segment
+        if idx + max(len(parent1), len(parent2)) > len(segment):
+            continue
+
+        # ignore variant if quality of sequencing at that base is below threshold
+        query_qualities = record.query_qualities.tolist()
+        # realign query_qualities if there are insertions
+        count = 0
+        insertions = 0
+        for tupl in cigar_tuples:
+            if count > idx:
+                break
+            if tupl[0] == 2:
+                insertions += tupl[1]
+            count += tupl[1]
+
+        if query_qualities[idx - insertions] < args.quality:
+            continue
         
         if variant.is_indel:
-            # check if indel is outside of segment
-            if idx + max(len(parent1), len(parent2)) > len(segment):
-                continue
-
             parent1_match = segment[idx:idx + len(parent1)] == parent1
             parent2_match = segment[idx:idx + len(parent2)] == parent2
 
@@ -230,9 +250,6 @@ def phase_detection(variants, segment, record):
                     variant_lst.append('N')
 
         else: # variant is a SNP
-            if idx >= len(segment):
-                break
-
             if segment[idx] == parent1:
                 variant_lst.append('1')
 
@@ -315,7 +332,7 @@ class Processor(Process):
             segment_1 = cigar(record_1)
             segment_2 = cigar(record_2)
 
-            variant_lst = phase_detection(variants_1, segment_1, record_1) + phase_detection(variants_2, segment_2, record_2)
+            variant_lst = phase_detection(variants_1, segment_1, record_1, self.args) + phase_detection(variants_2, segment_2, record_2, self.args)
 
             if '1' in variant_lst and '2' in variant_lst:
                 self.counter_queue.put('phase_change')

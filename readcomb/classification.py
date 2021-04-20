@@ -13,7 +13,7 @@ except:
     from filter import cigar
     
     
-def downstream_phase_detection(variants, segment, record):
+def downstream_phase_detection(variants, segment, record, quality):
     """
     Detect haplotype of variants in the given DNA sequence.
 
@@ -61,6 +61,21 @@ def downstream_phase_detection(variants, segment, record):
         
         # ignore if snp is before sequence
         if idx < 0:
+            continue
+
+        # ignore variant if quality of sequencing at that base is below threshold
+        query_qualities = record.query_qualities.tolist()
+        # realign query_qualities if there are insertions
+        count = 0
+        insertions = 0
+        for tupl in cigar_tuples:
+            if count > idx:
+                break
+            if tupl[0] == 2:
+                insertions += tupl[1]
+            count += tupl[1]
+
+        if query_qualities[idx - insertions] < quality:
             continue
         
         if variant.is_indel:
@@ -156,10 +171,11 @@ class Pair():
                     f'VCF: {self.vcf_filepath} \n' + \
                     f'Unmatched Variant(s): {self.no_match} \n' + \
                     f'Condensed: {self.condensed} \n' + \
-                    f'Call: {self.call} \n' + \
                     f'Condensed Masked: {self.masked_condensed} \n' + \
-                    f'Call Masked: {self.masked_call} \n' + \
-                    f'Midpoint: {self.get_midpoint()}'
+                    f'Call: {self.call} \n' + \
+                    f'Midpoint: {self.get_midpoint()} \n' + \
+                    f'Variants Per Haplotype: {self.variants_per_haplotype} \n' + \
+                    f'Gene Conversion Length: {self.gene_conversion_len}'
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
@@ -205,7 +221,7 @@ class Pair():
             self.rec_1 = pysam.AlignedSegment.fromstring(self.rec_1, header)
             self.rec_2 = pysam.AlignedSegment.fromstring(self.rec_2, header)
 
-    def classify(self, masking=70, vcf=None):
+    def classify(self, masking=70, quality=30, vcf=None):
         """
         Determine the type of recombination event that occursed in this read pair.
 
@@ -233,6 +249,8 @@ class Pair():
         ----------
         masking : int, default 70
             number of bases to be ignored when determing the ``masked_classification``
+        quality : int, default 30
+            filter quality for individual bases in a sequence
         vcf: cyvcf2.VCF, optional
             pre-initialized ``cyvcf2.VCF`` for this ``Pair`` to use when classifying, highly recommended        
         """
@@ -250,8 +268,8 @@ class Pair():
                                 self.rec_2.reference_start,
                                 self.rec_2.reference_start + self.rec_2.query_alignment_length)
 
-        self.detection_1 = downstream_phase_detection(self.variants_1, self.segment_1, self.rec_1)
-        self.detection_2 = downstream_phase_detection(self.variants_2, self.segment_2, self.rec_2)
+        self.detection_1 = downstream_phase_detection(self.variants_1, self.segment_1, self.rec_1, quality)
+        self.detection_2 = downstream_phase_detection(self.variants_2, self.segment_2, self.rec_2, quality)
 
         # set no_match variable if there are unmatched variants
         self.no_match = True if 'N' in self.detection_1 or 'N' in self.detection_2 else False
@@ -332,14 +350,17 @@ class Pair():
         haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
 
         # classify masked_condensed
-        if len(haplotypes) == 2:
-            self.masked_call = 'unambiguous_cross_over'
-        elif len(haplotypes) == 3:
-            self.masked_call = 'gene_conversion'
-        elif len(haplotypes) > 3:
-            self.masked_call = 'complex'
+        if len(haplotypes) == 2 and self.call == 'ambiguous_cross_over':
+            self.call = 'unambiguous_cross_over'
+
+        # length of gene_conversion
+        if self.call == 'gene_conversion':
+            self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
         else:
-            self.masked_call = 'no_phase_change'
+            self.gene_conversion_len = 'N/A'
+
+        # calculate average number of variants per haplotypes
+        self.variants_per_haplotype = len(self.variants_1 + self.variants_2) / max(len(haplotypes), 1)
 
         # convert haplotypes 1/2/N to VCF sample names
         samples = vcf.samples
