@@ -85,7 +85,7 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
 
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
-    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound+1)
+    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound)
     
     with SilentVCF():
         records = [rec for rec in vcf_file_obj(region)]
