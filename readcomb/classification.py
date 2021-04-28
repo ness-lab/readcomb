@@ -171,8 +171,9 @@ class Pair():
                     f'VCF: {self.vcf_filepath} \n' + \
                     f'Unmatched Variant(s): {self.no_match} \n' + \
                     f'Condensed: {self.condensed} \n' + \
-                    f'Condensed Masked: {self.masked_condensed} \n' + \
                     f'Call: {self.call} \n' + \
+                    f'Condensed Masked: {self.masked_condensed} \n' + \
+                    f'Masked Call: {self.masked_call} \n' + \
                     f'Midpoint: {self.get_midpoint()} \n' + \
                     f'Variants Per Haplotype: {self.variants_per_haplotype} \n' + \
                     f'Gene Conversion Length: {self.gene_conversion_len}'
@@ -307,7 +308,7 @@ class Pair():
 
         # classify condensed
         if len(haplotypes) == 2:
-            self.call = 'ambiguous_cross_over'
+            self.call = 'cross_over'
         elif len(haplotypes) == 3:
             self.call = 'gene_conversion'
         elif len(haplotypes) > 3:
@@ -350,8 +351,14 @@ class Pair():
         haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
 
         # classify masked_condensed
-        if len(haplotypes) == 2 and self.call == 'ambiguous_cross_over':
-            self.call = 'unambiguous_cross_over'
+        if len(haplotypes) == 2:
+            self.masked_call = 'cross_over'
+        elif len(haplotypes) == 3:
+            self.masked_call = 'gene_conversion'
+        elif len(haplotypes) > 3:
+            self.masked_call = 'complex'
+        else:
+            self.masked_call = 'no_phase_change'
 
         # length of gene_conversion
         if self.call == 'gene_conversion':
