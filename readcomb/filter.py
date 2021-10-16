@@ -7,48 +7,41 @@ import sys
 import argparse
 import time
 import datetime
-import pysam
 import subprocess
-import pandas as pd
 from io import BytesIO
 from multiprocessing import Queue
 from multiprocessing import Process
+
+import pysam
+import pandas as pd
 from cyvcf2 import VCF
 from tqdm import tqdm
 
-class readcomb_parser(argparse.ArgumentParser):
+class ReadcombParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f'error: {message}\n')
         self.print_help()
         sys.exit(1)
 
 def arg_parser():
-    parser = readcomb_parser(
+    parser = ReadcombParser(
         description='filter BAM for reads containing phase changes',
         usage='readcomb-filter [options]')
 
     parser.add_argument('-b', '--bam', required=True,
-                        type=str, help='BAM to filter, required')
-
+        type=str, help='BAM to filter, required')
     parser.add_argument('-v', '--vcf', required=True,
-                        type=str, help='VCF containing parents, required')
-
+        type=str, help='VCF containing parents, required')
     parser.add_argument('-p', '--processes', required=False, type=int, default=4,
-                        help='Number of processes to run readcomb filter on, default is 1')
-
+        help='Number of processes to run readcomb filter on, default is 1')
     parser.add_argument('-m', '--mode', required=False, type=str, default='phase_change',
-                        help='Read filtering mode (default phase_change) \
-                             [phase_change|no_match]')
-
+        help='Read filtering mode (default phase_change) [phase_change|no_match]')
     parser.add_argument('-l', '--log', required=False, default=None,
-                        type=str, help='Filename for log metric output [optional]')
-
+        type=str, help='Filename for log metric output [optional]')
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
-                        help='File to write to (default recomb_diagnosis)')
-    
+        help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
-                        help='Filter quality for individual bases in a sequence, default is 30')
-
+        help='Filter quality for individual bases in a sequence, default is 30')
     parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
     return parser
@@ -65,7 +58,7 @@ class SilentVCF:
 
 def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     """
-    Fetch variants from vcf file in given bounds.
+    Fetch variants from VCF file in given bounds.
 
     Parameters
     ----------
@@ -85,8 +78,7 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
 
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
-    region = '{c}:{l}-{r}'.format(c=chromosome, l=left_bound+1, r=right_bound)
-    
+    region = f'{chromosome}:{left_bound+1}-{right_bound}'
     with SilentVCF():
         records = [rec for rec in vcf_file_obj(region)]
     return records
@@ -95,8 +87,8 @@ def cigar(record):
     """
     Realign the given query segment to its reference.
 
-    Rebuild the sequence using the query sequence and cigar tuple from the bam record to realign
-    it with the reference sequence prior to variant matching
+    Rebuild the sequence using the query sequence and cigar tuple from the 
+    bam record to realign it with the reference sequence prior to variant matching
 
     Parameters
     ----------
@@ -163,9 +155,9 @@ def phase_detection(variants, segment, record, args):
     """
     Detect haplotype of variants in the given DNA sequence.
 
-    Takes a ``segment`` and a list of ``cyvcf2`` variants in the region of the segment 
-    to detect the haplotype of the sequence and generate a list of {'1','2','N'} to represent it
-    in the order of the variants on the segment
+    Takes a ``segment`` and a list of ``cyvcf2`` variants in the region of the segment
+    to detect the haplotype of the sequence and generate a list of {'1','2','N'} to
+    represent it in the order of the variants on the segment
 
     Parameters
     ----------
@@ -176,7 +168,7 @@ def phase_detection(variants, segment, record, args):
     record : pysam.AlignedSegment
         bam record from pysam alignment file
     args : Namespace
-        Namespace containing all user given arguements compiled by arg_parse()
+        Namespace containing all user given arguments compiled by arg_parse()
 
     Returns
     -------
@@ -203,7 +195,7 @@ def phase_detection(variants, segment, record, args):
         # ignore uninformative variants
         if parent1 == parent2:
             continue
-        
+
         # ignore if variant is before sequence
         if idx < 0:
             continue
@@ -226,7 +218,7 @@ def phase_detection(variants, segment, record, args):
 
         if query_qualities[idx - insertions] < args.quality:
             continue
-        
+
         if variant.is_indel:
             parent1_match = segment[idx:idx + len(parent1)] == parent1
             parent2_match = segment[idx:idx + len(parent2)] == parent2
@@ -262,17 +254,18 @@ def phase_detection(variants, segment, record, args):
     return variant_lst
 
 class Processor(Process):
-    def __init__(self, input_queue, counter_queue, 
+    def __init__(self, input_queue, counter_queue,
                 writer_queue, args, **kwargs):
         """
         Initialize the read pair processor.
 
-        Processor is inherited from ``multiprocessing.Process``; when started it receives pairs of
-        bam sequences through the ``input_queue`` from the scheduler and does phase change analysis, outputting 
-        through ``writer_queue`` bams that fit the user given arguement criteria to ``Writer``.
-        
-        When the scheduler has parsed and distributed all bam sequences, the ``Processor`` receives
-        a ``None`` through the ``input_queue`` and ends its loop and prepares to join.
+        Processor is inherited from ``multiprocessing.Process``; when started it receives
+        pairs of bam sequences through the ``input_queue`` from the scheduler and does
+        phase change analysis, outputting through ``writer_queue`` bams that fit the user
+        given argument criteria to ``Writer``.
+
+        When the scheduler has parsed and distributed all bam sequences, the ``Processor``
+        receives a ``None`` through the ``input_queue`` and ends its loop and prepares to join.
 
         Parameters
         ----------
@@ -283,8 +276,8 @@ class Processor(Process):
         writer_queue : multiprocessing.Queue
             output queue for bam read pairs in string form that fulfill the user given criteria
         args : Namespace
-            Namespace containing all user given arguements compiled by arg_parse()
-        **kwargs 
+            Namespace containing all user given arguments compiled by arg_parse()
+        **kwargs
             extra parameters passed onto super class ``multiprocessing.Queue()``
         """
         Process.__init__(self, **kwargs)
@@ -301,9 +294,9 @@ class Processor(Process):
         Start the ``Processor``
 
         ``run()`` is automatically called when the scheduler runs ``Processor.start()``,
-        this begins the operations of both the ``multiprocessing.Process()`` super class and
-        ``Processor``. 
-        
+        this begins the operations of both the ``multiprocessing.Process()`` super 
+        class and ``Processor``.
+
         See ``check_variants()``, ``cigar()``, and ``phase_detection`` for
         more information on the analysis process.
         """
@@ -314,15 +307,15 @@ class Processor(Process):
             record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
-            variants_1 = check_variants(self.vcf_file_obj, record_1.reference_name,
-                                    record_1.reference_start,
-                                    record_1.reference_start + record_1.query_alignment_length)
-            variants_2 = check_variants(self.vcf_file_obj, record_2.reference_name,
-                                    record_2.reference_start,
-                                    record_2.reference_start + record_2.query_alignment_length)
+            variants_1 = check_variants(
+                self.vcf_file_obj, record_1.reference_name, record_1.reference_start, 
+                record_1.reference_start + record_1.query_alignment_length)
+            variants_2 = check_variants(
+                self.vcf_file_obj, record_2.reference_name, record_2.reference_start, 
+                record_2.reference_start + record_2.query_alignment_length)
 
             self.counter_queue.put('seq')
-            if len(variants_1) + len(variants_2) > 1: 
+            if len(variants_1) + len(variants_2) > 1:
                 self.counter_queue.put('seq_with_variants')
             # skip if not enough variants
             else:
@@ -332,14 +325,15 @@ class Processor(Process):
             segment_1 = cigar(record_1)
             segment_2 = cigar(record_2)
 
-            variant_lst = phase_detection(variants_1, segment_1, record_1, self.args) + phase_detection(variants_2, segment_2, record_2, self.args)
+            variant_lst = phase_detection(variants_1, segment_1, record_1, self.args)
+            variant_lst += phase_detection(variants_2, segment_2, record_2, self.args)
 
             if '1' in variant_lst and '2' in variant_lst:
                 self.counter_queue.put('phase_change')
 
                 if 'phase_change' in self.args.mode:
                     self.writer_queue.put(pair)
-                
+
             if 'N' in variant_lst:
                 self.counter_queue.put('no_match')
 
@@ -348,8 +342,6 @@ class Processor(Process):
 
             pair = self.input_queue.get(block=True)
 
-
-    
 class Counter(Process):
     def __init__(self, input_queue, args, **kwargs):
         """
@@ -357,17 +349,17 @@ class Counter(Process):
 
         Inherited from ``multiprocessing.Process``, ``Counter`` receives sequence information
         from Processor processes through ``input_queue`` and tallies them to generate a ``tqdm``
-        progress bar in ``STDOUT``. 
-        
+        progress bar in ``STDOUT``.
+
         After being passed a ``None`` from the ``Scheduler, ``Counter``
-        either writes tallied results to ``STDOUT`` or a log depending on the user's arguements.
-        
+        either writes tallied results to ``STDOUT`` or a log depending on the user's arguments.
+
         Parameters
         ----------
         input_queue : multiprocessing.Queue
             get sequence information from all ``Processor`` processes
         args : Namespace
-            Namespace containing all user given arguements compiled by arg_parse()
+            Namespace containing all user given arguments compiled by arg_parse()
         **kwargs
             extra args that are passed onto super class ``Process``
         """
@@ -380,6 +372,7 @@ class Counter(Process):
             'seq': 0
             }
         self.args = args
+        self.progress = None
 
     def run(self):
         """
@@ -406,9 +399,9 @@ class Counter(Process):
             # update iteration counter if sequence
             if count == 'seq':
                 self.progress.update(n=1)
-            
+
             count = self.input_queue.get(block=True)
-        
+
         self.progress.close()
 
         # end timer
@@ -422,12 +415,12 @@ class Counter(Process):
         print('{} reads did not have enough variants (> 0) to call'.format(
             self.counters['seq'] - self.counters['seq_with_variants']
         ))
-        print('time taken: {}'.format(runtime))
-        
+        print(f'time taken: {runtime}'.format(runtime))
+
         # write to log if argument defined
         if self.args.log:
             # determine if we are adding to file or creating new log file
-            needs_header = False if os.path.isfile(self.args.log) else True
+            needs_header = bool(not os.path.isfile(self.args.log))
 
             # convert argparse namespace to dictionary to be more easily manipulated
             args_dict = vars(self.args)
@@ -436,24 +429,23 @@ class Counter(Process):
                 if needs_header:
                     fieldnames = ['time',
                                 'phase_change_reads',
-                                'no_match_reads', 
-                                'seq_with_variants', 
-                                'no_variant_reads', 
+                                'no_match_reads',
+                                'seq_with_variants',
+                                'no_variant_reads',
                                 'seqs',
                                 'time_taken']
                     fieldnames.extend(sorted(args_dict.keys()))
                     f.write(','.join(fieldnames) + '\n')
 
-                out_values = [datetime.datetime.now(), 
-                            self.counters['phase_change'], 
+                out_values = [datetime.datetime.now(),
+                            self.counters['phase_change'],
                             self.counters['no_match'],
-                            self.counters['seq_with_variants'], 
+                            self.counters['seq_with_variants'],
                             self.counters['seq'] - self.counters['seq_with_variants'],
                             self.counters["seq"],
                             runtime]
                 out_values.extend([args_dict[key] for key in sorted(args_dict.keys())])
                 f.write(','.join([str(n) for n in out_values]) + '\n')
-
 
 class Writer(Process):
     def __init__(self, input_queue, args, **kwargs):
@@ -465,14 +457,14 @@ class Writer(Process):
         ``Writer`` converts bam records in string form to ``pysam.AlignedSegment`` objects and
         writes them to a SAM file. When ``Writer`` receives a ``None`` from the Scheduler, the
         writing loop is ended and the output file is closed.
-        
+
 
         Parameters
         ----------
         input_queue : multiprocessing.Queue
             queue to receive bam record strings from all ``Processor`` processes
         args : Namespace
-            Namespace containing all user given arguements compiled by arg_parse()
+            Namespace containing all user given arguments compiled by arg_parse()
         **kwargs
             extra args that are passed onto super class ``Process``
         """
@@ -480,8 +472,8 @@ class Writer(Process):
         self.input_queue = input_queue
 
         pysam_obj = pysam.AlignmentFile(args.bam, 'r')
-        self.out = pysam.AlignmentFile(args.out + '.sam', 'wh', 
-                                        template=pysam_obj)
+        self.out = pysam.AlignmentFile(
+            args.out + '.sam', 'wh', template=pysam_obj)
         self.header = pysam.AlignmentFile(args.bam, 'r').header
 
     def run(self):
@@ -504,18 +496,17 @@ class Writer(Process):
         self.out.close()
 
 
-
-
 def matepair_process():
     """
     Start processes, queues, and distribute bam records to ``Processors``
 
     ``matepair_process`` calls ``arg_parse()`` to parse user given arguments.
 
-    It then initializes and starts ``Processors``, ``Counter``, and ``Writer`` processes/daemons 
-    and then equally distribute the bam records in string form to ``Processors``. 
-    
-    After all bam records have been distributed, ``None`` is passed to ``Processor`` 
+    It then initializes and starts ``Processors``, ``Counter``, and ``Writer``
+    processes/daemons and then equally distribute the bam records
+    in string form to ``Processors``.
+
+    After all bam records have been distributed, ``None`` is passed to ``Processor``
     processes, ``Counter process, and ``Writer`` process to signal their stop and
     ``close()`` the processes.
     """
@@ -528,14 +519,14 @@ def matepair_process():
         args.pair_count = None
     else:
         stats = subprocess.check_output(['samtools', 'idxstats', args.bam])
-        stats_table = pd.read_csv(BytesIO(stats), sep='\t', 
-                                    names=['chrom', 'length', 'map_reads', 'unmap_reads'])
+        stats_table = pd.read_csv(
+            BytesIO(stats), sep='\t',
+            names=['chrom', 'length', 'map_reads', 'unmap_reads'])
         pairs_sum = stats_table['map_reads'].sum()
         args.pair_count = int(pairs_sum / 2) # divide 2 to get pairs
 
         if pairs_sum % 2 != 0:
             raise ValueError('Preprocessing of bam file went wrong')
-
 
     # pysam argument object
     bam = pysam.AlignmentFile(args.bam, 'r')
@@ -557,9 +548,9 @@ def matepair_process():
     for i in range(args.processes):
         input_queue = Queue()
         input_queues.append(input_queue)
-        processes.append(Processor(input_queue, count_input, 
-                            write_input, args, 
-                            daemon=True, name='Process ' + str(i))) 
+        processes.append(
+            Processor(input_queue, count_input, write_input, args,
+                daemon=True, name='Process ' + str(i)))
         processes[i].start()
 
     prev_record = None
@@ -577,7 +568,7 @@ def matepair_process():
         else:
             if prev_record.query_name != record.query_name:
                 raise ValueError('Preprocessing of bam file went wrong')
-            
+
             # convert bam sequence to string so it can be pickled and sent in queue
             pair = [prev_record.to_string(), record.to_string()]
 
@@ -587,13 +578,13 @@ def matepair_process():
             if process_idx < args.processes - 1:
                 process_idx += 1
             else:
-                process_idx = 0 
+                process_idx = 0
 
             # clear the pair
             prev_record = None
 
     # shut down processes
-    for i in range(len(processes)):
+    for i, _ in enumerate(processes):
         # pass None to let processes know all bam sequences have been scheduled
         input_queues[i].put(None)
         input_queues[i].close()
@@ -610,14 +601,3 @@ def matepair_process():
 
 if __name__ == '__main__':
     matepair_process()
-    
-        
-
-            
-
-
-    
-
-    
-
-

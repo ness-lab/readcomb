@@ -11,37 +11,37 @@ from cyvcf2 import VCF
 from cyvcf2 import Writer
 from tqdm import tqdm
 
-class readcomb_parser(argparse.ArgumentParser):
+class ReadcombParser(argparse.ArgumentParser):
     def error(self, message):
         sys.stderr.write(f'error: {message}\n')
         self.print_help()
         sys.exit(1)
 
 def arg_parser():
-    parser = readcomb_parser(
-        description='prep parental VCF for phase change detection', 
+    parser = ReadcombParser(
+        description='prep parental VCF for phase change detection',
         usage='readcomb-vcfprep [options]')
 
     parser.add_argument('-v', '--vcf', required=True,
-            type=str, help='File to filter (.vcf.gz)')
-    parser.add_argument('--snps_only', required=False, 
-            action='store_true', help='Keep only SNPs [optional]')
-    parser.add_argument('--indels_only', required=False, 
-            action='store_true', help='Keep only indels [optional]')
+        type=str, help='File to filter (.vcf.gz)')
+    parser.add_argument('--snps_only', required=False,
+        action='store_true', help='Keep only SNPs [optional]')
+    parser.add_argument('--indels_only', required=False,
+        action='store_true', help='Keep only indels [optional]')
     parser.add_argument('--no_hets', required=False,
-            action='store_true', help='Remove heterozygote calls [optional]') 
+        action='store_true', help='Remove heterozygote calls [optional]')
     parser.add_argument('--min_GQ', required=False, default=30,
-            type=int, help='Min GQ at both sites (default 30)')
+        type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
-            type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
+        type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
     parser.add_argument('--version', action='version', version='readcomb 0.0.4')
 
     return parser
 
 def vcfprep(args):
     """
-    Iterate through parental VCF and remove records by given filters. 
-    
+    Iterate through parental VCF and remove records by given filters.
+
     All records where parent1 allele is the same as parent2
     ('uninformative sites') are automatically removed.
 
@@ -50,7 +50,7 @@ def vcfprep(args):
     Parameters
     ----------
     args : Namespace
-        Namespace containing all user given arguements compiled by arg_parse()
+        Namespace containing all user given arguments compiled by arg_parse()
 
     Returns
     -------
@@ -109,13 +109,13 @@ def vcfprep(args):
 def main():
     parser = arg_parser()
     args = parser.parse_args()
-    
-    print('[readcomb] filtering {}'.format(args.vcf))
+
+    print(f'[readcomb] filtering {args.vcf}')
     if args.min_GQ < 30:
         print('[readcomb] WARNING: min GQ below 30 selected')
     total_count, kept_count = vcfprep(args)
     print('[readcomb] Complete.')
-    print('[readcomb] {} of {} records retained.'.format(kept_count, total_count))
+    print(f'[readcomb] {kept_count} of {total_count} records retained.')
     if args.out.endswith('.gz'):
         print('[readcomb] compressing outfile...')
         proc_bgzip = subprocess.Popen(['bgzip', args.out.replace('.gz', '')])
@@ -127,6 +127,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-        
-
