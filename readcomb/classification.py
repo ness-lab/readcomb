@@ -410,10 +410,11 @@ class Pair():
 
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps
-        self.min_variants_in_haplotype = min(
-            len(list(grouper)) for value, grouper
-            in itertools.groupby([hap for hap, position in self.variants_1 + self.variants_2])
-            )
+        if 'no_phase_change' not in [self.call, self.masked_call]:
+            self.min_variants_in_haplotype = min(
+                len(list(grouper)) for value, grouper
+                in itertools.groupby([hap for hap, position in self.detection_1 + self.detection_2])
+                )
 
         # convert haplotypes 1/2/N to VCF sample names
         samples = vcf.samples
@@ -512,5 +513,7 @@ def pairs_creation(bam_filepath, vcf_filepath):
             prev_rec = rec
         # check if query_name pairs exist
         elif rec.query_name == prev_rec.query_name:
-            prev_rec = None
             yield Pair(rec, prev_rec, vcf_filepath)
+        elif rec.query_name != prev_rec.query_name:
+            prev_rec = rec
+            continue
