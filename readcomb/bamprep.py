@@ -93,7 +93,7 @@ def bamprep(args):
     print('[readcomb] Filtering...')
     filter_pos_cmd = f'{args.samtools} view -O bam '
     filter_pos_cmd += '-f 0x2 -F 0x100 -F 0x800 '
-    filter_pos_cmd += '-o {args.outdir}{basename}.temp.filtered.bam {args.bam}'
+    filter_pos_cmd += f'-o {args.outdir}{basename}.temp.filtered.bam {args.bam}'
     proc = subprocess.run(filter_pos_cmd.split(' '), check=True)
 
     if not args.no_progress:
@@ -112,7 +112,7 @@ def bamprep(args):
         else:
             idx_type = '.bai'
         print(f'[readcomb] Creating {idx_type} index file...')
-        index_cmd = f'{args.samtools} index {args.outdir}{basename}.sorted.bam'
+        index_cmd = f'{args.samtools} index {args.outdir}{basename}.sorted.bam '
         index_cmd += f'{args.outdir}{basename}.sorted{idx_type}'
         proc = subprocess.run(index_cmd.split(' '))
 
