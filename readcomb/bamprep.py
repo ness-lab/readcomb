@@ -39,7 +39,7 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.7')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.8')
 
     return parser
 
@@ -138,7 +138,7 @@ def bamprep(args):
     # remove filtered unsorted file
     print('[readcomb] Removing temp files...')
     try:
-        os.remove(f'{basename}.temp.filtered.bam')
+        os.remove(f'{args.outdir}{basename}.temp.filtered.bam')
     except OSError as e:
         raise FileNotFoundError(f'Unable to delete {e.filename} - {e.strerror}')
 
