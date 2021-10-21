@@ -39,7 +39,7 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.8')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.9')
 
     return parser
 
@@ -122,7 +122,7 @@ def bamprep(args):
 
         # remove positionally sorted file
         try:
-            os.remove(f'{basename}.sorted.bam')
+            os.remove(f'{args.outdir}{basename}.sorted.bam')
         except OSError as e:
             raise FileNotFoundError(f'Unable to delete {e.filename} - {e.strerror}') from e
 
