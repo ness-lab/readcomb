@@ -23,6 +23,7 @@ class ReadcombParser(argparse.ArgumentParser):
         self.print_help()
         sys.exit(1)
 
+
 def arg_parser():
     parser = ReadcombParser(
         description='filter BAM for reads containing phase changes',
@@ -42,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.6')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.7')
 
     return parser
 

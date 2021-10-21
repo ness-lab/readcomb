@@ -39,7 +39,7 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.6')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.7')
 
     return parser
 
@@ -64,7 +64,7 @@ def bamprep(args):
     match = re.search(r'\.[sb]am$', args.bam)
     if match:
         extension = match.group()
-        basename = args.bam[:args.bam.find(extension)]
+        basename = os.path.basename(args.bam[:args.bam.find(extension)])
     else:
         raise ValueError('input file is not SAM or BAM - make sure extension is correct')
 
@@ -94,6 +94,7 @@ def bamprep(args):
     filter_pos_cmd = f'{args.samtools} view -O bam '
     filter_pos_cmd += '-f 0x2 -F 0x100 -F 0x800 '
     filter_pos_cmd += f'-o {args.outdir}{basename}.temp.filtered.bam {args.bam}'
+    print(f'[readcomb] cmd: {filter_pos_cmd}')
     proc = subprocess.run(filter_pos_cmd.split(' '), check=True)
 
     if not args.no_progress:
@@ -104,6 +105,8 @@ def bamprep(args):
             sort_pos_cmd += f'-@{args.threads} '
         sort_pos_cmd += f'-o {args.outdir}{basename}.sorted.bam '
         sort_pos_cmd += f'{args.outdir}{basename}.temp.filtered.bam'
+        print('[readcomb] Sorting positionally for .bai creation...')
+        print(f'[readcomb] cmd: {sort_pos_cmd}')
         proc = subprocess.run(sort_pos_cmd.split(' '), check=True)
 
         # create bai file
@@ -114,6 +117,7 @@ def bamprep(args):
         print(f'[readcomb] Creating {idx_type} index file...')
         index_cmd = f'{args.samtools} index {args.outdir}{basename}.sorted.bam '
         index_cmd += f'{args.outdir}{basename}.sorted{idx_type}'
+        print(f'[readcomb] cmd: {index_cmd}')
         proc = subprocess.run(index_cmd.split(' '))
 
         # remove positionally sorted file
@@ -128,6 +132,7 @@ def bamprep(args):
     if args.threads:
         sort_cmd += f'-@{args.threads} '
     sort_cmd += f'-o {args.outdir}{basename}.sorted.bam {args.outdir}{basename}.temp.filtered.bam'
+    print(f'[readcomb] cmd: {sort_cmd}')
     proc = subprocess.run(sort_cmd.split(' '), check=True)
 
     # remove filtered unsorted file
@@ -136,7 +141,6 @@ def bamprep(args):
         os.remove(f'{basename}.temp.filtered.bam')
     except OSError as e:
         raise FileNotFoundError(f'Unable to delete {e.filename} - {e.strerror}')
-
 
 def main():
     parser = arg_parser()
@@ -148,6 +152,7 @@ def main():
             raise ValueError(f'ERROR: No samtools binary found at {args.samtools}')
     bamprep(args)
     print('[readcomb] Complete.')
+
 
 if __name__ == '__main__':
     main()

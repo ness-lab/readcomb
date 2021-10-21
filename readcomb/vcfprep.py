@@ -34,7 +34,7 @@ def arg_parser():
         type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.6')
+    parser.add_argument('--version', action='version', version='readcomb 0.0.7')
 
     return parser
 
@@ -105,12 +105,11 @@ def vcfprep(args):
 
     return total_count, kept_count
 
-
 def main():
     parser = arg_parser()
     args = parser.parse_args()
 
-    print(f'[readcomb] filtering {args.vcf}')
+    print(f'[readcomb] Filtering {args.vcf}')
     if args.min_GQ < 30:
         print('[readcomb] WARNING: min GQ below 30 selected')
     total_count, kept_count = vcfprep(args)
