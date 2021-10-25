@@ -34,7 +34,7 @@ def arg_parser():
         type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.9')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.0')
 
     return parser
 

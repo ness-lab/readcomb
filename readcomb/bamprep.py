@@ -39,7 +39,7 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.9')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.0')
 
     return parser
 
@@ -118,7 +118,7 @@ def bamprep(args):
         index_cmd = f'{args.samtools} index {args.outdir}{basename}.sorted.bam '
         index_cmd += f'{args.outdir}{basename}.sorted{idx_type}'
         print(f'[readcomb] cmd: {index_cmd}')
-        proc = subprocess.run(index_cmd.split(' '))
+        proc = subprocess.run(index_cmd.split(' '), check=True)
 
         # remove positionally sorted file
         try:

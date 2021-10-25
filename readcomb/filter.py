@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.0.9')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.0')
 
     return parser
 
@@ -88,7 +88,7 @@ def cigar(record):
     """
     Realign the given query segment to its reference.
 
-    Rebuild the sequence using the query sequence and cigar tuple from the 
+    Rebuild the sequence using the query sequence and cigar tuple from the
     bam record to realign it with the reference sequence prior to variant matching
 
     Parameters
@@ -295,7 +295,7 @@ class Processor(Process):
         Start the ``Processor``
 
         ``run()`` is automatically called when the scheduler runs ``Processor.start()``,
-        this begins the operations of both the ``multiprocessing.Process()`` super 
+        this begins the operations of both the ``multiprocessing.Process()`` super
         class and ``Processor``.
 
         See ``check_variants()``, ``cigar()``, and ``phase_detection`` for
@@ -309,10 +309,10 @@ class Processor(Process):
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
             variants_1 = check_variants(
-                self.vcf_file_obj, record_1.reference_name, record_1.reference_start, 
+                self.vcf_file_obj, record_1.reference_name, record_1.reference_start,
                 record_1.reference_start + record_1.query_alignment_length)
             variants_2 = check_variants(
-                self.vcf_file_obj, record_2.reference_name, record_2.reference_start, 
+                self.vcf_file_obj, record_2.reference_name, record_2.reference_start,
                 record_2.reference_start + record_2.query_alignment_length)
 
             self.counter_queue.put('seq')
