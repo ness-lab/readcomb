@@ -410,7 +410,8 @@ class Counter(Process):
         runtime = str(datetime.timedelta(seconds=round(end - start)))
 
         # print counters to STDOUT
-        print('{} phase change reads pairs from total {} read pairs'.format(
+        print(f'[readcomb] completed filtering for {self.args.bam}')
+        print('{} phase change-containing read pairs from total {} read pairs'.format(
             self.counters['phase_change'], self.counters['seq']))
         print('{} reads had no-match variants'.format(self.counters['no_match']))
         print('{} reads did not have enough variants (> 0) to call'.format(
@@ -426,7 +427,7 @@ class Counter(Process):
             # convert argparse namespace to dictionary to be more easily manipulated
             args_dict = vars(self.args)
 
-            with open(args_dict, 'a') as f:
+            with open(self.args.log, 'a') as f:
                 if needs_header:
                     fieldnames = ['time',
                                 'phase_change_reads',
@@ -473,8 +474,14 @@ class Writer(Process):
         self.input_queue = input_queue
 
         pysam_obj = pysam.AlignmentFile(args.bam, 'r')
+        if args.out.endswith('.bam'):
+            print('[readcomb] WARNING: readcomb-filter only outputs .sam files')
+            args.out = args.out.replace('.bam', '.sam')
+            print(f'[readcomb] output will be written to {args.out}')
+        elif not args.out.endswith('.sam'):
+            args.out = args.out + '.sam'
         self.out = pysam.AlignmentFile(
-            args.out + '.sam', 'wh', template=pysam_obj)
+            args.out, 'wh', template=pysam_obj)
         self.header = pysam.AlignmentFile(args.bam, 'r').header
 
     def run(self):
@@ -516,7 +523,7 @@ def matepair_process():
 
     # idxstats on bam/bai file
     if not os.path.isfile(args.bam + '.bai'):
-        print('Bai file not found, continuing without progress bars')
+        print('[readcomb] bai file not provided - continuing without progress bars')
         args.pair_count = None
     else:
         stats = subprocess.check_output(['samtools', 'idxstats', args.bam])
@@ -532,7 +539,7 @@ def matepair_process():
     # pysam argument object
     bam = pysam.AlignmentFile(args.bam, 'r')
 
-    print('Creating processes')
+    print('[readcomb] creating processes')
     # set up counter and writer
     count_input = Queue()
     # daemon causes other sub-processes to auto shutdown if main process is interrupted
@@ -557,7 +564,7 @@ def matepair_process():
     prev_record = None
     process_idx = 0
 
-    print('Processes created')
+    print('[readcomb] processes created')
 
     for record in bam:
         # check if record is in a proper pair
