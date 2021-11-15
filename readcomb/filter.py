@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.0')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.1')
 
     return parser
 
@@ -51,7 +51,7 @@ class SilentVCF:
     # helper class for check_variants that silences cyvcf2 warnings
     def __enter__(self):
         self._original_stderr = sys.stderr
-        sys.stderr = open(os.devnull, 'w')
+        sys.stderr = open(os.devnull, 'a')
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         sys.stderr.close()
@@ -80,8 +80,7 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
     region = f'{chromosome}:{left_bound+1}-{right_bound}'
-    with SilentVCF():
-        records = [rec for rec in vcf_file_obj(region)]
+    records = [record for record in vcf_file_obj(region)]
     return records
 
 def cigar(record):
