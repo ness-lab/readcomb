@@ -98,31 +98,31 @@ def downstream_phase_detection(variants, segment, record, quality):
             # is harder to match
             if len(parent1) > len(parent2):
                 if parent1_match:
-                    detection_results.append(('1', variant.start))
+                    detection_results.append(('1', variant.start, parent1))
                 elif parent2_match:
-                    detection_results.append(('2', variant.start))
+                    detection_results.append(('2', variant.start, parent2))
                 else:
-                    detection_results.append(('N', variant.start))
+                    detection_results.append(('N', variant.start, None))
             else:
                 if parent2_match:
-                    detection_results.append(('2', variant.start))
+                    detection_results.append(('2', variant.start, parent2))
                 elif parent1_match:
-                    detection_results.append(('1', variant.start))
+                    detection_results.append(('1', variant.start, parent1))
                 else:
-                    detection_results.append(('N', variant.start))
+                    detection_results.append(('N', variant.start, None))
 
         else: # variant is a SNP
             if idx >= len(segment):
                 break
 
             if segment[idx] == parent1:
-                detection_results.append(('1', variant.start))
+                detection_results.append(('1', variant.start, parent1))
 
             elif segment[idx] == parent2:
-                detection_results.append(('2', variant.start))
+                detection_results.append(('2', variant.start, parent1))
 
             else:
-                detection_results.append(('N', variant.start))
+                detection_results.append(('N', variant.start, None))
 
     return detection_results
 
@@ -152,6 +152,9 @@ class Pair():
         else:
             self.rec_1 = record2
             self.rec_2 = record1
+        self.location = ''.join(f'{self.rec_1.reference_name}:\
+        {self.rec_1.reference_start}-\
+        {self.rec_2.reference_start + self.rec_2.query_alignment_length}'.split())
 
         self.vcf_filepath = vcf_filepath
 
@@ -161,10 +164,12 @@ class Pair():
         self.segment_2 = cigar(self.rec_2)
         self.variants_1 = None
         self.variants_2 = None
+        self.variants_filt = None
 
         # recombination event calling
         self.detection_1 = None
         self.detection_2 = None
+        self.detection = None
         self.no_match = None
         self.condensed = None
         self.masked_condensed = None
@@ -303,14 +308,21 @@ class Pair():
         self.variants_2 = check_variants(
             vcf, self.rec_2.reference_name, self.rec_2.reference_start, 
             self.rec_2.reference_start + self.rec_2.query_alignment_length)
+        vcf.close()
 
         self.detection_1 = downstream_phase_detection(
             self.variants_1, self.segment_1, self.rec_1, quality)
         self.detection_2 = downstream_phase_detection(
             self.variants_2, self.segment_2, self.rec_2, quality)
+        self.detection = self.detection_1 + self.detection_2
+
+        # create condensed variant list with used variants for easy lookup
+        self.variants_filt = [
+            variant for variant in self.variants_1 + self.variants_2
+            if variant.POS in [v[1] + 1 for v in self.detection]]
 
         # set no_match variable if there are unmatched variants
-        self.no_match = bool('N' in self.detection_1 or 'N' in self.detection_2)
+        self.no_match = any([v[0] == 'N' for v in self.detection])
 
         # simplification of results
         # [(haplotype, beginning, end), ...]
@@ -328,7 +340,7 @@ class Pair():
             # different haplotype
             elif self.condensed[-1][0] != haplotype:
                 # middle of previous variant location and current variant
-                # gonna round down so it's not a decimal
+                # rounding down so it's not a decimal
                 midpoint = int((self.condensed[-1][2] + location) // 2)
                 self.condensed[-1][2] = midpoint
                 self.condensed.append([haplotype, midpoint, midpoint])
@@ -410,10 +422,10 @@ class Pair():
 
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps
-        if 'no_phase_change' not in [self.call, self.masked_call]:
+        if 'no_phase_change' not in set([self.call, self.masked_call]):
             self.min_variants_in_haplotype = min(
                 len(list(grouper)) for value, grouper
-                in itertools.groupby([hap for hap, position in self.detection_1 + self.detection_2])
+                in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
 
         # convert haplotypes 1/2/N to VCF sample names
@@ -476,6 +488,9 @@ class Pair():
             start = self.condensed[0][2]
             end = self.condensed[-1][1]
             self.midpoint = (start + end) / 2
+
+        # return in samtools format
+        self.midpoint = f'{self.rec_1.reference_name}:{round(self.midpoint)}'
 
         return self.midpoint
 
