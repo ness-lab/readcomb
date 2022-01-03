@@ -60,8 +60,8 @@ def downstream_phase_detection(variants, segment, record, quality):
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
         idx = variant.start - record.reference_start
 
-        parent1 = variant.gt_bases[0].split('/')[0]
-        parent2 = variant.gt_bases[1].split('/')[0]
+        parent1 = variant.gt_bases[0].split('/')[0].split('|')[0]
+        parent2 = variant.gt_bases[1].split('/')[0].split('|')[0]
 
         if parent1 == parent2: # ignore uninformative SNPs
             continue
@@ -93,23 +93,14 @@ def downstream_phase_detection(variants, segment, record, quality):
             parent1_match = segment[idx:idx + len(parent1)] == parent1
             parent2_match = segment[idx:idx + len(parent2)] == parent2
 
-            # always check parent haplotype that is longer first as
-            # most include the shorter haplotype thus the longer haplotype
-            # is harder to match
-            if len(parent1) > len(parent2):
-                if parent1_match:
-                    detection_results.append(('1', variant.start, parent1))
-                elif parent2_match:
-                    detection_results.append(('2', variant.start, parent2))
-                else:
-                    detection_results.append(('N', variant.start, None))
+            if parent1_match and not parent2_match:
+                detection_results.append(('1', variant.start, parent1))
+            elif parent2_match and not parent1_match:
+                detection_results.append(('2', variant.start, parent2))
+            elif parent1_match and parent2_match:
+                continue
             else:
-                if parent2_match:
-                    detection_results.append(('2', variant.start, parent2))
-                elif parent1_match:
-                    detection_results.append(('1', variant.start, parent1))
-                else:
-                    detection_results.append(('N', variant.start, None))
+                detection_results.append(('N', variant.start, None))
 
         else: # variant is a SNP
             if idx >= len(segment):
@@ -119,7 +110,7 @@ def downstream_phase_detection(variants, segment, record, quality):
                 detection_results.append(('1', variant.start, parent1))
 
             elif segment[idx] == parent2:
-                detection_results.append(('2', variant.start, parent1))
+                detection_results.append(('2', variant.start, parent2))
 
             else:
                 detection_results.append(('N', variant.start, None))
@@ -209,8 +200,9 @@ class Pair():
                     f'Condensed Masked: {self.masked_condensed} \n' + \
                     f'Masked Call: {self.masked_call} \n' + \
                     f'Midpoint: {self.get_midpoint()} \n' + \
-                    f'Variants Per Haplotype: {self.variants_per_haplotype} \n' + \
-                    f'Gene Conversion Length: {self.gene_conversion_len}'
+                    f'Variants Per Haplotype (Masked): {self.variants_per_haplotype} \n' + \
+                    f'Gene Conversion Length: {self.gene_conversion_len} \n' + \
+                    f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n' + \
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \

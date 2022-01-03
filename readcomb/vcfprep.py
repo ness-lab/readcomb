@@ -34,7 +34,7 @@ def arg_parser():
         type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.1')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.2')
 
     return parser
 
@@ -98,6 +98,19 @@ def vcfprep(args):
         # ensure parental alleles differ
         if record.gt_bases[0] == record.gt_bases[1]:
             continue
+
+        # remove any calls with deleted alleles
+        if '*' in ' '.join(record.gt_bases):
+            continue
+
+        # remove uninformative indels
+        # e.g. A/ATC - either both match, or we have a no match
+        if not args.snps_only:
+            if record.is_indel:
+                allele_1 = record.gt_bases[0].split('/')[0].split('|')[0]
+                allele_2 = record.gt_bases[1].split('/')[0].split('|')[0]
+                if allele_1 in allele_2 or allele_2 in allele_1:
+                    continue
 
         # only passes if record not caught in above filters
         vcf_out.write_record(record)

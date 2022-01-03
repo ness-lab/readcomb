@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.1')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.2')
 
     return parser
 
@@ -80,7 +80,8 @@ def check_variants(vcf_file_obj, chromosome, left_bound, right_bound):
     # 1 is added to record.reference_start and the following parameter because vcf is 1 indexed
     # in order to keep code consistent
     region = f'{chromosome}:{left_bound+1}-{right_bound}'
-    records = [record for record in vcf_file_obj(region)]
+    with SilentVCF():
+        records = [record for record in vcf_file_obj(region)]
     return records
 
 def cigar(record):
@@ -189,8 +190,8 @@ def phase_detection(variants, segment, record, args):
         # variant.start grabs vcf positions in 0 index while vcfs are 1 indexed
         idx = variant.start - record.reference_start
 
-        parent1 = variant.gt_bases[0].split('/')[0]
-        parent2 = variant.gt_bases[1].split('/')[0]
+        parent1 = variant.gt_bases[0].split('/')[0].split('|')[0]
+        parent2 = variant.gt_bases[1].split('/')[0].split('|')[0]
 
         # ignore uninformative variants
         if parent1 == parent2:
@@ -223,23 +224,14 @@ def phase_detection(variants, segment, record, args):
             parent1_match = segment[idx:idx + len(parent1)] == parent1
             parent2_match = segment[idx:idx + len(parent2)] == parent2
 
-            # always check parent haplotype that is longer first as
-            # most include the shorter haplotype thus the longer haplotype
-            # is harder to match
-            if len(parent1) > len(parent2):
-                if parent1_match:
-                    variant_lst.append('1')
-                elif parent2_match:
-                    variant_lst.append('2')
-                else:
-                    variant_lst.append('N')
+            if parent1_match and not parent2_match:
+                variant_lst.append('1')
+            elif parent2_match and not parent1_match:
+                variant_lst.append('2')
+            elif parent1_match and parent2_match:
+                continue # uninformative allele! 
             else:
-                if parent2_match:
-                    variant_lst.append('2')
-                elif parent1_match:
-                    variant_lst.append('1')
-                else:
-                    variant_lst.append('N')
+                variant_lst.append('N')
 
         else: # variant is a SNP
             if segment[idx] == parent1:
