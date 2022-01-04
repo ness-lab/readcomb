@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.2')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.3')
 
     return parser
 

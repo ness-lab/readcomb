@@ -20,6 +20,8 @@ except ImportError as e:
     from filter import check_variants
     from filter import cigar
 
+__version__ = '0.1.3'
+
 def downstream_phase_detection(variants, segment, record, quality):
     """
     Detect haplotype of variants in the given DNA sequence.
@@ -202,7 +204,7 @@ class Pair():
                     f'Midpoint: {self.get_midpoint()} \n' + \
                     f'Variants Per Haplotype (Masked): {self.variants_per_haplotype} \n' + \
                     f'Gene Conversion Length: {self.gene_conversion_len} \n' + \
-                    f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n' + \
+                    f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n'
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
