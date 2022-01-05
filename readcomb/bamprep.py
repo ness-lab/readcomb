@@ -39,7 +39,7 @@ def arg_parser():
         bars in filtering step).')
     parser.add_argument('-o', '--outdir', required=False,
         type=str, help='Directory to write to [optional] (default: current dir)')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.3')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.4')
 
     return parser
 
@@ -99,7 +99,6 @@ def bamprep(args):
 
     if not args.no_progress:
     # sort positionally for bai file creation
-        print('[readcomb] Positionally sorting for bai creation...')
         sort_pos_cmd = f'{args.samtools} sort -O bam '
         if args.threads:
             sort_pos_cmd += f'-@{args.threads} '

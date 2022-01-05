@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.3')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.4')
 
     return parser
 
@@ -513,7 +513,7 @@ def matepair_process():
     args = parser.parse_args()
 
     # idxstats on bam/bai file
-    if not os.path.isfile(args.bam + '.bai'):
+    if not os.path.isfile(args.bam.replace('.bam', '.bai')):
         print('[readcomb] bai file not provided - continuing without progress bars')
         args.pair_count = None
     else:
