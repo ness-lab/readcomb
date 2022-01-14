@@ -33,6 +33,8 @@ def arg_parser():
         action='store_true', help='Remove heterozygote calls [optional]')
     parser.add_argument('--min_GQ', required=False, default=30,
         type=int, help='Min GQ at both sites (default 30)')
+    parser.add_argument('--purity_filter', required=False, default=1,
+        type=int, help='Purity filter stringency (default 1 read allowed) - set -1 to disable')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
     parser.add_argument('--version', action='version', version='readcomb 0.1.5')
@@ -69,6 +71,8 @@ def vcfprep(args):
 
     if args.out.endswith('.gz'):
         outfile = args.out.replace('.gz', '')
+    else:
+        outfile = args.out
     vcf_out = Writer(outfile, vcf_in)
     vcf_out.write_header()
 
@@ -101,23 +105,25 @@ def vcfprep(args):
             continue
 
         # purity filter
-        # allow at most 1 read with opposite parent allele
-        if len(record.ALT) == 1:
-            if min(rec.gt_depths - rec.gt_alt_depths) > 1:
-                continue
-            if min(rec.gt_depths - rec.gt_ref_depths) > 1:
-                continue
-        elif len(record.ALT) > 1:
-            # need to get allele-specific depths from raw record
-            depths = [call.split(':').split(',') for call in rec.__str__().split('\t')[-2:]]
-            # only keep depths for non-ref alleles
-            call1_depths = np.array(depths[0][1:], dtype='int')
-            call2_depths = np.array(depths[1][1:], dtype='int')
-            # depth for opposite alt allele should be no more than 1
-            if min(call1_depths) > 1:
-                continue
-            if min(call2_depths) > 1:
-                continue
+        purity_threshold = args.purity_filter
+        if not purity_threshold == -1:
+            # allow at most [threshold] read with opposite parent allele by default
+            if len(record.ALT) == 1:
+                if min(record.gt_depths - record.gt_alt_depths) > purity_threshold:
+                    continue
+                if min(record.gt_depths - record.gt_ref_depths) > purity_threshold:
+                    continue
+            elif len(record.ALT) > 1:
+                # need to get allele-specific depths from raw record
+                depths = [call.split(':')[1].split(',') for call in record.__str__().split('\t')[-2:]]
+                # only keep depths for non-ref alleles
+                call1_depths = np.array(depths[0][1:], dtype='int')
+                call2_depths = np.array(depths[1][1:], dtype='int')
+                # depth for opposite alt allele should be no more than [threshold]
+                if min(call1_depths) > threshold:
+                    continue
+                if min(call2_depths) > threshold:
+                    continue
 
         # remove any calls with deleted alleles
         if '*' in ' '.join(record.gt_bases):
@@ -136,6 +142,9 @@ def main():
     print(f'[readcomb] Filtering {args.vcf}')
     if args.min_GQ < 30:
         print('[readcomb] WARNING: min GQ below 30 selected')
+    if not args.purity_filter == -1:
+        print(f'[readcomb] Purity threshold is {args.purity_filter}')
+        print('[readcomb] Set --purity_filter to -1 to disable purity filtering')
     total_count, kept_count = vcfprep(args)
     print('[readcomb] Complete.')
     print(f'[readcomb] {kept_count} of {total_count} records retained.')
