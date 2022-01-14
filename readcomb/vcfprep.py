@@ -7,6 +7,7 @@ filters if needed
 import subprocess
 import argparse
 import sys
+import numpy as np
 from cyvcf2 import VCF
 from cyvcf2 import Writer
 from tqdm import tqdm
@@ -34,7 +35,7 @@ def arg_parser():
         type=int, help='Min GQ at both sites (default 30)')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.4')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.5')
 
     return parser
 
@@ -96,21 +97,31 @@ def vcfprep(args):
             continue
 
         # ensure parental alleles differ
-        if record.gt_bases[0] == record.gt_bases[1]:
+        if record.gt_bases[0][0] == record.gt_bases[1][0]:
             continue
+
+        # purity filter
+        # allow at most 1 read with opposite parent allele
+        if len(record.ALT) == 1:
+            if min(rec.gt_depths - rec.gt_alt_depths) > 1:
+                continue
+            if min(rec.gt_depths - rec.gt_ref_depths) > 1:
+                continue
+        elif len(record.ALT) > 1:
+            # need to get allele-specific depths from raw record
+            depths = [call.split(':').split(',') for call in rec.__str__().split('\t')[-2:]]
+            # only keep depths for non-ref alleles
+            call1_depths = np.array(depths[0][1:], dtype='int')
+            call2_depths = np.array(depths[1][1:], dtype='int')
+            # depth for opposite alt allele should be no more than 1
+            if min(call1_depths) > 1:
+                continue
+            if min(call2_depths) > 1:
+                continue
 
         # remove any calls with deleted alleles
         if '*' in ' '.join(record.gt_bases):
             continue
-
-        # remove uninformative indels
-        # e.g. A/ATC - either both match, or we have a no match
-        if not args.snps_only:
-            if record.is_indel:
-                allele_1 = record.gt_bases[0].split('/')[0].split('|')[0]
-                allele_2 = record.gt_bases[1].split('/')[0].split('|')[0]
-                if allele_1 in allele_2 or allele_2 in allele_1:
-                    continue
 
         # only passes if record not caught in above filters
         vcf_out.write_record(record)
