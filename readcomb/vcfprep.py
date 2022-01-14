@@ -37,7 +37,7 @@ def arg_parser():
         type=int, help='Purity filter stringency (default 1 read allowed) - set -1 to disable')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.5')
+    parser.add_argument('--version', action='version', version='readcomb 0.1.6')
 
     return parser
 
@@ -120,9 +120,9 @@ def vcfprep(args):
                 call1_depths = np.array(depths[0][1:], dtype='int')
                 call2_depths = np.array(depths[1][1:], dtype='int')
                 # depth for opposite alt allele should be no more than [threshold]
-                if min(call1_depths) > threshold:
+                if min(call1_depths) > purity_threshold:
                     continue
-                if min(call2_depths) > threshold:
+                if min(call2_depths) > purity_threshold:
                     continue
 
         # remove any calls with deleted alleles
