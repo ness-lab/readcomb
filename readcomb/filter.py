@@ -43,7 +43,7 @@ def arg_parser():
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
         help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.1.6')
+    parser.add_argument('--version', action='version', version='readcomb 0.2.0')
 
     return parser
 
@@ -152,6 +152,66 @@ def cigar(record):
 
     return ''.join(segment)
 
+def qualities_cigar(record):
+    """
+    Generate updated list of base qualities for use in ``phase_detection``.
+    'Realigns' query qualities based on indels as needed. Follows the logic found
+    in the ``cigar`` function.
+
+    Deletions in the read relative to the reference are denoted as NoneType
+    whereas insertions to the read are removed from consideration.
+
+    For example, if a read has the cigar string is 10M10I10M10D10M (10 matches,
+    10 insertions to read, 10 matches, 10 deletions from read, 10 matches, the
+    realigned segment would include the matches, remove the inserted bases, include
+    subsequent matches, add 10 '-' characters to reflect the deletion, and then
+    include the final 10 bases.
+
+    Similarly, this function will remove base qualities for inserted bases and
+    insert None for each '-' character, so that indices are preserved when
+    using ``phase_detection``.
+
+    Parameters
+    ----------
+    record : pysam.AlignedSegment
+        bam record from pysam alignment file
+
+    Returns
+    -------
+    list of base qualities
+        list of integers encoding base qualities
+    """
+    input_quals = record.query_qualities.tolist()
+
+    # if all bases match, return full query qualities
+    if all([op == 0 for op, basecount in record.cigartuples]):
+        return input_quals
+
+    idx = 0
+    output_quals = []
+    for op, basecount in record.cigartuples:
+
+        # match - append qualities as normal
+        if op == 0:
+            output_quals.extend(input_quals[idx:idx + basecount])
+            idx += basecount
+
+        # insertion to the read - increment index and ignore
+        elif op == 1:
+            idx += basecount
+
+        # deletion in the read - add None to quals for consistency with segment
+        elif op == 2:
+            output_quals.extend([None] * basecount)
+
+        # soft clipping - increment index and ignore
+        elif op == 4:
+            idx += basecount
+
+    return output_quals
+
+
+
 def phase_detection(variants, segment, record, args):
     """
     Detect haplotype of variants in the given DNA sequence.
@@ -185,6 +245,8 @@ def phase_detection(variants, segment, record, args):
     if not cigar_tuples:
         return variant_lst
 
+    query_qualities = qualities_cigar(record)
+
     for variant in variants:
         # Using variant.start and record.reference_start since they are both 0 based
         # variant.start grabs vcf positions in 0 index while vcfs are 1 indexed
@@ -206,18 +268,10 @@ def phase_detection(variants, segment, record, args):
             continue
 
         # ignore variant if quality of sequencing at that base is below threshold
-        query_qualities = record.query_qualities.tolist()
-        # realign query_qualities if there are insertions
-        count = 0
-        insertions = 0
-        for tupl in cigar_tuples:
-            if count > idx:
-                break
-            if tupl[0] == 2:
-                insertions += tupl[1]
-            count += tupl[1]
+        if not query_qualities[idx]:
+            continue # variant site is deleted in read
 
-        if query_qualities[idx - insertions] < args.quality:
+        if query_qualities[idx] < args.quality:
             continue
 
         if variant.is_indel:

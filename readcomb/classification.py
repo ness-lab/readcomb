@@ -14,13 +14,15 @@ from cyvcf2 import VCF
 try:
     from readcomb.filter import check_variants
     from readcomb.filter import cigar
+    from readcomb.filter import qualities_cigar
 except ImportError as e:
     print('WARNING: readcomb is not installed')
     print('Use command: pip install readcomb')
     from filter import check_variants
     from filter import cigar
+    from filter import qualities_cigar
 
-__version__ = '0.1.6'
+__version__ = '0.2.0'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -57,6 +59,9 @@ def downstream_phase_detection(variants, segment, record, quality):
     if not cigar_tuples:
         return detection_results
 
+    # get realigned base qualities
+    query_qualities = qualities_cigar(record)
+
     for variant in variants:
         # Using SNP.start and record.reference_start since they are both 0 based
         # SNP.start grabs vcf positions in 0 index while vcfs are 1 indexed
@@ -73,18 +78,10 @@ def downstream_phase_detection(variants, segment, record, quality):
             continue
 
         # ignore variant if quality of sequencing at that base is below threshold
-        query_qualities = record.query_qualities.tolist()
-        # realign query_qualities if there are insertions
-        count = 0
-        insertions = 0
-        for tupl in cigar_tuples:
-            if count > idx:
-                break
-            if tupl[0] == 2:
-                insertions += tupl[1]
-            count += tupl[1]
+        if not query_qualities[idx]:
+            continue # variant site is deleted in read
 
-        if query_qualities[idx - insertions] < quality:
+        if query_qualities[idx] < quality:
             continue
 
         if variant.is_indel:
@@ -145,9 +142,6 @@ class Pair():
         else:
             self.rec_1 = record2
             self.rec_2 = record1
-        self.location = ''.join(f'{self.rec_1.reference_name}:\
-        {self.rec_1.reference_start}-\
-        {self.rec_2.reference_start + self.rec_2.query_alignment_length}'.split())
 
         self.vcf_filepath = vcf_filepath
 
@@ -158,6 +152,9 @@ class Pair():
         self.variants_1 = None
         self.variants_2 = None
         self.variants_filt = None
+        self.location = ''.join(f'{self.rec_1.reference_name}:\
+        {self.rec_1.reference_start}-\
+        {self.rec_2.reference_start + len(self.segment_2)}'.split())
 
         # recombination event calling
         self.detection_1 = None
@@ -189,12 +186,12 @@ class Pair():
         string : str
             string representation of the ``Pair`` object
         """
-        if hasattr(self, 'call'):
+        if self.call:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
-                    f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
+                    f'-{self.rec_1.reference_start + len(self.segment_1)} \n' + \
                     f'Read2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
-                    f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
+                    f'-{self.rec_2.reference_start + len(self.segment_2)} \n' + \
                     f'VCF: {self.vcf_filepath} \n' + \
                     f'Unmatched Variant(s): {self.no_match} \n' + \
                     f'Condensed: {self.condensed} \n' + \
@@ -208,9 +205,9 @@ class Pair():
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
-                    f'-{self.rec_1.reference_start + self.rec_1.query_alignment_length} \n' + \
+                    f'-{self.rec_1.reference_start + len(self.segment_1)} \n' + \
                     f'Read2: {self.rec_2.reference_name}:{self.rec_2.reference_start}' + \
-                    f'-{self.rec_2.reference_start + self.rec_2.query_alignment_length} \n' + \
+                    f'-{self.rec_2.reference_start + len(self.segment_2)} \n' + \
                     f'VCF: {self.vcf_filepath}'
 
         return string
@@ -298,16 +295,20 @@ class Pair():
 
         self.variants_1 = check_variants(
             vcf, self.rec_1.reference_name, self.rec_1.reference_start, 
-            self.rec_1.reference_start + self.rec_1.query_alignment_length)
+            self.rec_1.reference_start + len(self.segment_1))
         self.variants_2 = check_variants(
             vcf, self.rec_2.reference_name, self.rec_2.reference_start, 
-            self.rec_2.reference_start + self.rec_2.query_alignment_length)
+            self.rec_2.reference_start + len(self.segment_2))
         vcf.close()
 
         self.detection_1 = downstream_phase_detection(
             self.variants_1, self.segment_1, self.rec_1, quality)
         self.detection_2 = downstream_phase_detection(
             self.variants_2, self.segment_2, self.rec_2, quality)
+
+        # deal with 'het pairs' - see resolve_overlap() documentation
+        # updates the read-specific detection methods
+        self.resolve_overlap()
         self.detection = self.detection_1 + self.detection_2
 
         # create condensed variant list with used variants for easy lookup
@@ -404,6 +405,44 @@ class Pair():
         else:
             self.masked_call = 'no_phase_change'
 
+        # convert haplotypes 1/2/N to VCF sample names
+        samples = vcf.samples
+
+        for tupl in self.condensed:
+            if tupl[0] == '1':
+                tupl[0] = samples[0]
+            elif tupl[0] == '2':
+                tupl[0] = samples[1]
+
+        for tupl in self.masked_condensed:
+            if tupl[0] == '1':
+                tupl[0] = samples[0]
+            elif tupl[0] == '2':
+                tupl[0] = samples[1]
+
+        # set descriptive + quality attributes post-classification
+        self._describe(haplotypes)
+
+
+    def _describe(self, haplotypes):
+        """
+        Internal method to calculate various attributes of ``Pair``. Sets
+        the following attributes:
+
+        - gene_conversion_len - length of gene conversion segment, if applicable,
+          as determined by midpoint method
+        - variants_per_haplotype - average number of variants supporting each
+          haplotype
+        - min_variants_in_haplotype - number of variants in least
+          well-supported haplotype
+
+        Parameters
+        ----------
+        haplotypes : haplotype listing generated from self.masked_condensed
+        """
+        if not self.call:
+            self.classify()
+
         # length of gene_conversion
         if self.call == 'gene_conversion':
             self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
@@ -422,20 +461,28 @@ class Pair():
                 in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
 
-        # convert haplotypes 1/2/N to VCF sample names
-        samples = vcf.samples
+    def resolve_overlap(self):
+        """
+        Helper function for ``Pair.classify()``. 
 
-        for tupl in self.condensed:
-            if tupl[0] == '1':
-                tupl[0] = samples[0]
-            elif tupl[0] == '2':
-                tupl[0] = samples[1]
+        Resolves cases where the same site is sequenced in both reads (i.e. the
+        reads overlap) but the calls at the two sites differ. This will
+        otherwise be incorrectly flagged as a phase change when it's more
+        likely to be a sequencing error or paralogous alignment. This method
+        filters the variants_* and detection_* attributes to remove any
+        variants where this is the case.
+        """
+        overlapping_sites = list(set(var[1] for var in self.detection_1).intersection(
+            set(var[1] for var in self.detection_2)))
+        for site in overlapping_sites:
+            read_1_call = [(hap, pos, base) for hap, pos, base in self.detection_1 if pos == site][0]
+            read_2_call = [(hap, pos, base) for hap, pos, base in self.detection_2 if pos == site][0]
 
-        for tupl in self.masked_condensed:
-            if tupl[0] == '1':
-                tupl[0] = samples[0]
-            elif tupl[0] == '2':
-                tupl[0] = samples[1]
+            # if calls at same site disagree, remove variant from consideration
+            if read_1_call != read_2_call:
+                self.detection_1.remove(read_1_call)
+                self.detection_2.remove(read_2_call)
+
 
     def get_midpoint(self):
         """
