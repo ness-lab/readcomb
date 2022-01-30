@@ -42,8 +42,10 @@ def arg_parser():
     parser.add_argument('-o', '--out', required=False, type=str, default='recomb_diagnosis',
         help='File to write to (default recomb_diagnosis)')
     parser.add_argument('-q', '--quality', required=False, type=int, default=30,
-        help='Filter quality for individual bases in a sequence, default is 30')
-    parser.add_argument('--version', action='version', version='readcomb 0.2.0')
+        help='Filter quality for individual bases in a sequence (default: 30)')
+    parser.add_argument('--min_mapq', required=False, type=int, default=40,
+        help='Minimum MAPQ for read consideration (default: 40)')
+    parser.add_argument('--version', action='version', version='readcomb 0.2.1')
 
     return parser
 
@@ -210,8 +212,6 @@ def qualities_cigar(record):
 
     return output_quals
 
-
-
 def phase_detection(variants, segment, record, args):
     """
     Detect haplotype of variants in the given DNA sequence.
@@ -353,6 +353,13 @@ class Processor(Process):
             record_1 = pysam.AlignedSegment.fromstring(pair[0], self.header)
             record_2 = pysam.AlignedSegment.fromstring(pair[1], self.header)
 
+            # skip if either record is below mapq filter
+            if any([record_1.mapq < self.args.min_mapq, record_2.mapq < self.args.min_mapq]):
+                pair = self.input_queue.get(block=True)
+                self.counter_queue.put('seq')
+                self.counter_queue.put('failed_mapq')
+                continue
+
             variants_1 = check_variants(
                 self.vcf_file_obj, record_1.reference_name, record_1.reference_start,
                 record_1.reference_start + record_1.query_alignment_length)
@@ -415,7 +422,8 @@ class Counter(Process):
             'no_match': 0,
             'phase_change': 0,
             'seq_with_variants': 0,
-            'seq': 0
+            'seq': 0,
+            'failed_mapq': 0
             }
         self.args = args
         self.progress = None
@@ -462,6 +470,8 @@ class Counter(Process):
         print('{} reads did not have enough variants (> 0) to call'.format(
             self.counters['seq'] - self.counters['seq_with_variants']
         ))
+        print('{} reads were below the MAPQ threshold ({})'.format(
+            self.counters['failed_mapq'], self.args.min_mapq))
         print(f'time taken: {runtime}'.format(runtime))
 
         # write to log if argument defined
@@ -479,6 +489,7 @@ class Counter(Process):
                                 'no_match_reads',
                                 'seq_with_variants',
                                 'no_variant_reads',
+                                'failed_mapq_reads',
                                 'seqs',
                                 'time_taken']
                     fieldnames.extend(sorted(args_dict.keys()))
@@ -489,7 +500,8 @@ class Counter(Process):
                             self.counters['no_match'],
                             self.counters['seq_with_variants'],
                             self.counters['seq'] - self.counters['seq_with_variants'],
-                            self.counters["seq"],
+                            self.counters['failed_mapq'],
+                            self.counters['seq'],
                             runtime]
                 out_values.extend([args_dict[key] for key in sorted(args_dict.keys())])
                 f.write(','.join([str(n) for n in out_values]) + '\n')
@@ -620,7 +632,7 @@ def matepair_process():
             prev_record = record
         else:
             if prev_record.query_name != record.query_name:
-                raise ValueError('Preprocessing of bam file went wrong')
+                raise ValueError(f'Read {record.query_name} not paired')
 
             # convert bam sequence to string so it can be pickled and sent in queue
             pair = [prev_record.to_string(), record.to_string()]
