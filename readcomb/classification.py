@@ -8,6 +8,7 @@ environment.
 """
 
 import itertools
+import re
 import numpy as np
 import pysam
 from cyvcf2 import VCF
@@ -23,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.2.1'
+__version__ = '0.2.2'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -152,6 +153,7 @@ class Pair():
         self.segment_2 = cigar(self.rec_2)
         self.variants_1 = None
         self.variants_2 = None
+        self.variants_all = None
         self.variants_filt = None
         self.location = ''.join(f'{self.rec_1.reference_name}:\
         {self.rec_1.reference_start}-\
@@ -208,7 +210,8 @@ class Pair():
                     f'Midpoint: {self.get_midpoint()} \n' + \
                     f'Variants Per Haplotype: {self.variants_per_haplotype} \n' + \
                     f'Gene Conversion Length: {self.gene_conversion_len} \n' + \
-                    f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n'
+                    f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n' + \
+                    f'Mismatch/Variant Ratio: {self.mismatch_variant_ratio} \n'
         else:
             string = f'Record name: {self.rec_1.query_name} \n' + \
                     f'Read1: {self.rec_1.reference_name}:{self.rec_1.reference_start}' + \
@@ -262,7 +265,7 @@ class Pair():
             self.rec_1 = pysam.AlignedSegment.fromstring(self.rec_1, header)
             self.rec_2 = pysam.AlignedSegment.fromstring(self.rec_2, header)
 
-    def classify(self, masking=70, quality=30, vcf=None):
+    def classify(self, masking=0, quality=30, vcf=None):
         """
         Determine the type of recombination event that occursed in this read pair.
 
@@ -288,7 +291,7 @@ class Pair():
 
         Parameters
         ----------
-        masking : int, default 70
+        masking : int, default 0
             number of bases to be ignored when determing the ``masked_classification``
         quality : int, default 30
             filter quality for individual bases in a sequence
@@ -313,15 +316,22 @@ class Pair():
         self.detection_2 = downstream_phase_detection(
             self.variants_2, self.segment_2, self.rec_2, quality)
 
-        # deal with 'het pairs' - see resolve_overlap() documentation
+        # deal with 'het pairs' and 'duplicate variants' - see _resolve_overlap() documentation
         # updates the read-specific detection methods
-        self.resolve_overlap()
+        self._resolve_overlap()
         self.detection = self.detection_1 + self.detection_2
 
-        # create condensed variant list with used variants for easy lookup
+        # create condensed variant list for easy look up
+        # this hideous listcomp removes duplicates and sorts variants
+        self.variants_all = [
+            [variant for variant in self.variants_1 + self.variants_2 if variant.POS == pos][0]
+            for pos in sorted(set(variant.POS for variant in self.variants_1 + self.variants_2))]
+
+        # create filtered variant list only containing variants used for detection
         self.variants_filt = [
-            variant for variant in self.variants_1 + self.variants_2
+            variant for variant in self.variants_all
             if variant.POS in [v[1] + 1 for v in self.detection]]
+            
 
         # set no_match variable if there are unmatched variants
         self.no_match = any([v[0] == 'N' for v in self.detection])
@@ -433,27 +443,26 @@ class Pair():
         # set descriptive + quality attributes post-classification
         self._describe(haplotypes, vcf)
 
+        # if gene conversion - set descriptive info
+        if 'gene_conversion' in [self.call, self.masked_call]:
+            self._describe_gene_conversion(vcf)
+        else:
+            self.gene_conversion_len = 'N/A'
+            self.converted_haplotype = 'N/A'
+            self.converted_variants = 'N/A'
+
     def _describe(self, haplotypes, vcf):
         """
         Internal method to calculate various attributes of ``Pair``. Sets
         the following attributes:
 
+        - mismatch_variant_ratio - number of mismatches to reference over the
+          number of variants - see ``Pair._get_mismatch_variant_ratio()``
+          documentation for details
         - variants_per_haplotype - average number of variants supporting each
           haplotype
         - min_variants_in_haplotype - number of variants in least
           well-supported haplotype
-        - overlap - whether or not the two reads in the read pair overlap
-        - overlap_disagree - whether there are discrepancies in base calls
-          between overlapping reads
-
-        The following attributes are only set if the read pair is called as a
-        gene conversion:
-        - gene_conversion_len - length of gene conversion segment, if applicable,
-          as determined by midpoint method
-        - converted_haplotype - which haplotype was 'converted to'
-        - converted_variants - which variants were converted in the tract
-        - indel_proximity - how close the nearest indel is to the converted tract, 
-          if any
 
         Parameters
         ----------
@@ -465,9 +474,11 @@ class Pair():
         if not self.call:
             self.classify()
 
+        # use helper function to calculate unexpected mismatch count
+        self.mismatch_variant_ratio = self._get_mismatch_variant_ratio()
+
         # calculate average number of variants per haplotype and create dict of counts
-        self.variants_per_haplotype = len(self.variants_1 + self.variants_2) / \
-            max(len(haplotypes), 1)
+        self.variants_per_haplotype = len(self.variants_filt) / max(len(haplotypes), 1)
         self.variant_counts = {
             hap: haplotypes.count(hap) for hap in set(haplotypes)}
 
@@ -479,72 +490,124 @@ class Pair():
                 in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
 
-        # gene conversion attributes
-        if 'gene_conversion' in [self.call, self.masked_call]:
-            self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
+    def _describe_gene_conversion(self, vcf):
+        """
+        Internal method to calculate various attributes of ``Pair`` if the
+        pair is called as a gene conversion. Sets the following attributes:
 
-            # converted haplotype and variants
-            self.converted_haplotype = [
-                hap for hap, count in self.variant_counts.items() 
-                if count == min(self.variant_counts.values())][0]
-            self.converted_variants = [
-                variant for variant in self.detection if variant[0] == self.converted_haplotype]
+        The following attributes are only set if the read pair is called as a
+        gene conversion:
+        - gene_conversion_len - length of gene conversion segment, if applicable,
+          as determined by midpoint method
+        - converted_haplotype - which haplotype was 'converted to'
+        - converted_variants - which variants were converted in the tract
+        - indel_proximity - how close the nearest indel is to the converted tract, 
+          if any
+        """
+        self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
 
-            # set converted haplotype to sample name
-            if self.converted_haplotype == '1':
-                self.converted_haplotype = vcf.samples[0]
-            elif self.converted_haplotype == '2':
-                self.converted_haplotype = vcf.samples[1]
+        # converted haplotype and variants
+        self.converted_haplotype = [
+            hap for hap, count in self.variant_counts.items() 
+            if count == min(self.variant_counts.values())][0]
+        self.converted_variants = [
+            variant for variant in self.detection if variant[0] == self.converted_haplotype]
 
-            # indel proximity
-            indels = []
-            for rec in [self.rec_1, self.rec_2]:
-                idx = rec.reference_start
-                for op, basecount in rec.cigartuples:
-                    if op == 0:
-                        idx += basecount
-                    elif op == 1:
-                        indels.append(['ins', idx, idx])
-                    elif op == 2:
-                        indels.append(['del', idx, idx + basecount])
-            # overlapping reads may have the same indel register twice
-            indels = list(indel for indel, _ in itertools.groupby(indels)) 
+        # set converted haplotype to sample name
+        if self.converted_haplotype == '1':
+            self.converted_haplotype = vcf.samples[0]
+        elif self.converted_haplotype == '2':
+            self.converted_haplotype = vcf.samples[1]
 
-            conversion_tract = np.array([
-                tract for tract in self.condensed 
-                if tract[0] == self.converted_haplotype][0][1:])
-            if indels:
-                self.indel_proximity = abs(min(np.concatenate(
-                    [np.array(indel[1:]) - np.array(conversion_tract)
-                     for indel in indels])))
-            else:
-                self.indel_proximity = 'N/A'
-            
+        # indel proximity
+        indels = []
+        for rec in [self.rec_1, self.rec_2]:
+            idx = rec.reference_start
+            for op, basecount in rec.cigartuples:
+                if op == 0:
+                    idx += basecount
+                elif op == 1:
+                    indels.append(['ins', idx, idx])
+                elif op == 2:
+                    indels.append(['del', idx, idx + basecount])
+        # overlapping reads may have the same indel register twice
+        indels = list(indel for indel, _ in itertools.groupby(indels)) 
+
+        conversion_tract = np.array([
+            tract for tract in self.condensed 
+            if tract[0] == self.converted_haplotype][0][1:])
+        if indels:
+            self.indel_proximity = abs(min(np.concatenate(
+                [np.array(indel[1:]) - np.array(conversion_tract)
+                 for indel in indels])))
         else:
-            self.gene_conversion_len = 'N/A'
-            self.converted_haplotype = 'N/A'
-            self.converted_variants = 'N/A'
+            self.indel_proximity = 'N/A'
+        
 
-        # check whether sites overlap
+    def _get_mismatch_variant_ratio(self):
+        """
+        Helper function to calculate mismatch_variant_ratio quality metric. Will
+        use MD tags in reads to get the number of mismatches to the reference
+        per read, and then compare with the number of variants. Ratios above 1
+        indicate variation that was either deemed too low quality to be
+        included in the VCF. It is possible some sites could have diverged from
+        the reference and resulted in the same allele in both parents, but this
+        is less likely than the region simply being prone to paralogous
+        alignment if the ratio is particularly high.
+
+        The MD tag also includes deletions, designated as '^ATG' if 'ATG' is a
+        3 bp deletion from the reference in the read. These deletions are
+        removed from consideration.
+        """
+        if len(self.variants_1) + len(self.variants_2) == 0:
+            return None
+
         if not self.overlap:
-            if self.rec_2.reference_start < self.rec_1.reference_start + len(self.segment_1):
-                self.overlap = True
-            else:
-                self.overlap = False
+            rec_1_mismatches = len(
+                re.findall(
+                    r'[ACGT]', re.sub(r'\^[ACGT]+', '', self.rec_1.get_tag('MD'))
+                    )
+                )
+            rec_2_mismatches = len(
+                re.findall(
+                    r'[ACGT]', re.sub(r'\^[ACGT]+', '', self.rec_2.get_tag('MD'))
+                    )
+                )
+            return (rec_1_mismatches + rec_2_mismatches) / len(self.variants_filt)
 
-        # if there's overlap, check whether overlapping sites disagree
-        if self.overlap:
-            # identify overlapping region
-            region = [self.rec_2.reference_start, self.rec_1.reference_start + len(self.segment_1)]
-            idx = self.rec_2.reference_start - self.rec_1.reference_start
-            segment_1 = self.segment_1[idx:region[1]]
-            segment_2 = self.segment_2[0:len(segment_1)]
-            if segment_1 != segment_2: # compare full strings
-                self.overlap_disagree = False
-            else:
-                self.overlap_disagree = True
+        elif self.overlap:
+            m1 = self.rec_1.get_tag('MD')
+            m2 = self.rec_2.get_tag('MD')
 
-    def resolve_overlap(self):
+            # get overlap
+            for i, _ in enumerate(m1):
+                # remove up to 3 digits from end
+                # since these may differ
+                subseq = re.sub(r'[0-9]{0,3}$', '', m1[i:])
+                # test subseqs
+                if subseq in m2:
+                    overlap_seq = subseq
+                    break
+            if not overlap_seq: # happens if the segment removed in re.sub above was the overlap
+                if m2 in m1[-3:]:
+                    overlap_seq = m2
+
+            # get regions on either side of overlap
+            left_region = m1[:m1.index(overlap_seq)]
+            right_region = re.sub(
+                r'^[0-9]{0,3}', '',
+                m2[m2.index(overlap_seq) + len(overlap_seq):]
+            )
+            mismatches = 0
+            for region in [left_region, overlap_seq, right_region]:
+                mismatches += len(
+                    re.findall(
+                        r'[ACGT]', re.sub(r'\^[ACGT]+', '', region)
+                        )
+                    )
+            return mismatches / len(self.variants_filt)
+
+    def _resolve_overlap(self):
         """
         Helper function for ``Pair.classify()``. 
 
@@ -555,10 +618,16 @@ class Pair():
         filters the variants_* and detection_* attributes to remove any
         variants where this is the case.
 
-        Will set the self.overlap attribute to True if variants overlap (though
-        this, along with self.overlap_disagree, is more closely dealt with in
-        ``Pair._describe()``).
+        If the variants do have the same call, the variant in the second (3')
+        read will be removed so that the call doesn't show multiple times in
+        ``Pair.detection``.
+
+        Will set the self.overlap attribute to True if variants overlap.
+        Finally, will check whether there are discrepancies in base calls
+        between overlapping reads at all (and will set overlap_disagree
+        accordingly).
         """
+        # check variant site overlap first
         overlapping_sites = list(set(var[1] for var in self.detection_1).intersection(
             set(var[1] for var in self.detection_2)))
 
@@ -574,7 +643,27 @@ class Pair():
             if read_1_call != read_2_call:
                 self.detection_1.remove(read_1_call)
                 self.detection_2.remove(read_2_call)
+            elif read_1_call == read_2_call:
+                self.detection_2.remove(read_2_call) # only remove from right read
 
+        # check if there is any overlap at all
+        if not self.overlap:
+            if self.rec_2.reference_start < self.rec_1.reference_start + len(self.segment_1):
+                self.overlap = True
+            else:
+                self.overlap = False
+
+        # if there's overlap, check whether overlapping sites anywhere in read disagree
+        if self.overlap:
+            # identify overlapping region
+            region = [self.rec_2.reference_start, self.rec_1.reference_start + len(self.segment_1)]
+            idx = self.rec_2.reference_start - self.rec_1.reference_start
+            segment_1 = self.segment_1[idx:region[1]]
+            segment_2 = self.segment_2[0:len(segment_1)]
+            if segment_1 != segment_2: # compare full strings
+                self.overlap_disagree = False
+            else:
+                self.overlap_disagree = True
 
     def get_midpoint(self):
         """
