@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.2.2'
+__version__ = '0.2.3'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -148,13 +148,14 @@ class Pair():
         self.vcf_filepath = vcf_filepath
 
         # descriptive attributes for pairs
-        self.midpoint = None
         self.segment_1 = cigar(self.rec_1)
         self.segment_2 = cigar(self.rec_2)
         self.variants_1 = None
         self.variants_2 = None
         self.variants_all = None
         self.variants_filt = None
+        self.midpoint = None
+        self.relative_midpoint = -1
         self.location = ''.join(f'{self.rec_1.reference_name}:\
         {self.rec_1.reference_start}-\
         {self.rec_2.reference_start + len(self.segment_2)}'.split())
@@ -173,8 +174,10 @@ class Pair():
         # quality metrics
         self.overlap = None
         self.overlap_disagree = None
-        self.variants_per_haplotype = None
-        self.min_variants_in_haplotype = None
+        self.variants_per_haplotype = -1
+        self.min_variants_in_haplotype = -1
+        self.relative_midpoint = -1
+        self.mismatch_variant_ratio = -1
         self.variant_counts = None
         self.converted_haplotype = None
         self.converted_variants = None
@@ -332,7 +335,6 @@ class Pair():
             variant for variant in self.variants_all
             if variant.POS in [v[1] + 1 for v in self.detection]]
             
-
         # set no_match variable if there are unmatched variants
         self.no_match = any([v[0] == 'N' for v in self.detection])
 
@@ -442,6 +444,7 @@ class Pair():
 
         # set descriptive + quality attributes post-classification
         self._describe(haplotypes, vcf)
+        self.midpoint, self.relative_midpoint = self.get_midpoint()
 
         # if gene conversion - set descriptive info
         if 'gene_conversion' in [self.call, self.masked_call]:
@@ -560,7 +563,9 @@ class Pair():
         removed from consideration.
         """
         if len(self.variants_1) + len(self.variants_2) == 0:
-            return None
+            return -1
+        if len(self.variants_filt) == 0:
+            return -1
 
         if not self.overlap:
             rec_1_mismatches = len(
@@ -681,6 +686,8 @@ class Pair():
         -------
         midpoint : int
             the middle point of the phase change event of the ``Pair``
+        relative_midpoint : float
+            the location of the midpoint relative to the length of the ``Pair``
         """
         # give error if Pair object is packaged
         if isinstance(self.rec_1, str) or isinstance(self.rec_2, str):
@@ -702,19 +709,26 @@ class Pair():
             start = self.rec_1.reference_start
             end = self.rec_2.reference_start + self.rec_2.query_alignment_length
             self.midpoint = int((start + end) / 2)
-        elif self.call == 'phase_change':
+            self.relative_midpoint = -1
+        elif self.call in ['cross_over', 'gene_conversion']:
             # (X, begin, end), (Y, begin, end): end of X = beginning of Y = midpoint
             self.midpoint = self.condensed[0][2]
+            # get relative midpoint
+            start = self.condensed[0][2]
+            end = self.condensed[-1][2]
+            self.relative_midpoint = round(
+                (self.midpoint - self.rec_1.reference_start) / (end - start), 3)
         else:
             # kind of a shortcut using midpoints to find the middle
             start = self.condensed[0][2]
             end = self.condensed[-1][1]
             self.midpoint = (start + end) / 2
+            self.relative_midpoint = -1
 
         # return in samtools format
         self.midpoint = f'{self.rec_1.reference_name}:{round(self.midpoint)}'
 
-        return self.midpoint
+        return self.midpoint, self.relative_midpoint
 
 
 def pairs_creation(bam_filepath, vcf_filepath):
