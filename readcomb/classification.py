@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.2.4'
+__version__ = '0.2.5'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -492,7 +492,8 @@ class Pair():
         self.variants_per_haplotype = len(self.variants_filt) / max(len(haplotypes), 1)
         self.variant_counts = {
             hap: [t[0] for t in self.detection].count(hap) for hap in set(haplotypes)}
-        self.variant_skew = max(self.variant_counts.values()) / min(self.variant_counts.values())
+        if len(self.variant_counts.values()) == 2: # only calc if both haps present
+            self.variant_skew = max(self.variant_counts.values()) / min(self.variant_counts.values())
 
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps
