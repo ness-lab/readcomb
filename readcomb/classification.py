@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.2.3'
+__version__ = '0.2.4'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -141,6 +141,12 @@ class Pair():
         if record1.reference_start < record2.reference_start:
             self.rec_1 = record1
             self.rec_2 = record2
+        elif (
+            record1.reference_start == record2.reference_start and
+            record1.reference_end < record2.reference_end # rare, but possible
+        ):
+            self.rec_1 = record2
+            self.rec_2 = record1
         else:
             self.rec_1 = record2
             self.rec_2 = record1
@@ -176,6 +182,7 @@ class Pair():
         self.overlap_disagree = None
         self.variants_per_haplotype = -1
         self.min_variants_in_haplotype = -1
+        self.variant_skew = -1
         self.relative_midpoint = -1
         self.mismatch_variant_ratio = -1
         self.variant_counts = None
@@ -212,6 +219,7 @@ class Pair():
                     f'Masked Call: {self.masked_call} \n' + \
                     f'Midpoint: {self.get_midpoint()} \n' + \
                     f'Variants Per Haplotype: {self.variants_per_haplotype} \n' + \
+                    f'Variant Skew: {self.variant_skew} \n' + \
                     f'Gene Conversion Length: {self.gene_conversion_len} \n' + \
                     f'Min Variants In Haplotype: {self.min_variants_in_haplotype} \n' + \
                     f'Mismatch/Variant Ratio: {self.mismatch_variant_ratio} \n'
@@ -372,7 +380,7 @@ class Pair():
                     self.condensed[-1][2] = self.rec_2.reference_start + \
                         self.rec_2.query_alignment_length
 
-        # create list of just haplotype information no range from condensed
+        # create list of just haplotype information without range from condensed
         haplotypes = [tupl[0] for tupl in self.condensed if tupl[0] != 'N']
 
         # classify condensed
@@ -483,7 +491,8 @@ class Pair():
         # calculate average number of variants per haplotype and create dict of counts
         self.variants_per_haplotype = len(self.variants_filt) / max(len(haplotypes), 1)
         self.variant_counts = {
-            hap: haplotypes.count(hap) for hap in set(haplotypes)}
+            hap: [t[0] for t in self.detection].count(hap) for hap in set(haplotypes)}
+        self.variant_skew = max(self.variant_counts.values()) / min(self.variant_counts.values())
 
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps

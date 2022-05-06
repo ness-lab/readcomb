@@ -37,7 +37,7 @@ def arg_parser():
         type=int, help='Purity filter stringency (default 1 read allowed) - set -1 to disable')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.2.3')
+    parser.add_argument('--version', action='version', version='readcomb 0.2.4')
 
     return parser
 
@@ -114,11 +114,10 @@ def vcfprep(args):
                 if min(record.gt_depths - record.gt_ref_depths) > purity_threshold:
                     continue
             elif len(record.ALT) > 1:
-                # need to get allele-specific depths from raw record
-                depths = [call.split(':')[1].split(',') for call in record.__str__().split('\t')[-2:]]
+                # need to get allele-specific depths from raw record - obtained from AO field
+                depths = [call.split(':')[-2].split(',') for call in record.__str__().split('\t')[-2:]]
                 # only keep depths for non-ref alleles
-                call1_depths = np.array(depths[0][1:], dtype='int')
-                call2_depths = np.array(depths[1][1:], dtype='int')
+                call1_depths, call2_depths = [np.array(d, dtype='int') for d in depths]
                 # depth for opposite alt allele should be no more than [threshold]
                 if min(call1_depths) > purity_threshold:
                     continue
