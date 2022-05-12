@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.2.5'
+__version__ = '0.3.0'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -330,7 +330,8 @@ class Pair():
         # deal with 'het pairs' and 'duplicate variants' - see _resolve_overlap() documentation
         # updates the read-specific detection methods
         self._resolve_overlap()
-        self.detection = self.detection_1 + self.detection_2
+        self.detection = sorted(self.detection_1 + self.detection_2,
+            key=lambda variant: variant[1]) # sort by position
 
         # create condensed variant list for easy look up
         # this hideous listcomp removes duplicates and sorts variants
