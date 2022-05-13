@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.0'
+__version__ = '0.3.1'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -143,7 +143,7 @@ class Pair():
             self.rec_2 = record2
         elif (
             record1.reference_start == record2.reference_start and
-            record1.reference_end < record2.reference_end # rare, but possible
+            record1.reference_end > record2.reference_end # rare, but possible
         ):
             self.rec_1 = record2
             self.rec_2 = record1
@@ -183,7 +183,6 @@ class Pair():
         self.variants_per_haplotype = -1
         self.min_variants_in_haplotype = -1
         self.variant_skew = -1
-        self.relative_midpoint = -1
         self.mismatch_variant_ratio = -1
         self.variant_counts = None
         self.converted_haplotype = None
@@ -351,7 +350,7 @@ class Pair():
         # [(haplotype, beginning, end), ...]
         self.condensed = []
 
-        for variant in self.detection_1 + self.detection_2:
+        for variant in self.detection:
             haplotype, location, base = variant
 
             # first variant
@@ -380,6 +379,11 @@ class Pair():
                 if variant == self.detection_2[-1]:
                     self.condensed[-1][2] = self.rec_2.reference_start + \
                         self.rec_2.query_alignment_length
+
+        # this occurs during false positive phase changes when reads overlap
+        if any(start == end for hap, start, end in self.condensed):
+            for false_hap in [h for h in self.condensed if h[1] == h[2]]:
+                self.condensed.remove(false_hap)
 
         # create list of just haplotype information without range from condensed
         haplotypes = [tupl[0] for tupl in self.condensed if tupl[0] != 'N']
@@ -775,7 +779,7 @@ def pairs_creation(bam_filepath, vcf_filepath):
             prev_rec = rec
         # check if query_name pairs exist
         elif rec.query_name == prev_rec.query_name:
-            yield Pair(rec, prev_rec, vcf_filepath)
+            yield Pair(prev_rec, rec, vcf_filepath)
         elif rec.query_name != prev_rec.query_name:
             prev_rec = rec
             continue

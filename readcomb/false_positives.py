@@ -20,8 +20,15 @@ import subprocess
 
 import pysam
 from tqdm import tqdm
-from filter import ReadcombParser # from readcomb-filter
-import classification as rc
+
+try:
+    import readcomb.classification as rc
+    from readcomb.filter import ReadcombParser
+except ImportError as e:
+    print('WARNING: readcomb is not installed')
+    print('Use command: pip install readcomb')
+    import classification as rc
+    from filter import ReadcombParser 
 
 def arg_parser():
     parser = ReadcombParser(
@@ -46,7 +53,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.0')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.1')
 
     return parser
 
