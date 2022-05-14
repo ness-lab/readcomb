@@ -37,7 +37,7 @@ def arg_parser():
         type=int, help='Purity filter stringency (default 1 read allowed) - set -1 to disable')
     parser.add_argument('-o', '--out', required=True,
         type=str, help='File to write to. If .gz, script will bgzip and tabix file.')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.2')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.3')
 
     return parser
 

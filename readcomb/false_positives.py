@@ -23,12 +23,12 @@ import pysam
 from tqdm import tqdm
 
 try:
-    import readcomb.classification as rc
+    from readcomb.classification import pairs_creation
     from readcomb.filter import ReadcombParser
 except ImportError as e:
     print('WARNING: readcomb is not installed')
     print('Use command: pip install readcomb')
-    import classification as rc
+    from classification import pairs_creation
     from filter import ReadcombParser 
 
 def arg_parser():
@@ -54,7 +54,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.2')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.3')
 
     return parser
 
@@ -96,7 +96,7 @@ class BedGenerator():
             self.bed_fname = 'readcomb.parental_fp.bed.temp'
         
     def generate_bed(self):
-        """main function to invoke specific bed creation functions
+        """main method to invoke specific BED creation methods
         """
         if self.method == 'midpoint':
             self._generate_midpoint_bed()
@@ -109,7 +109,7 @@ class BedGenerator():
                 f'method must be one of midpoint, overlap, or nuclear, not {self.method}')
 
     def _generate_midpoint_bed(self):
-        """generate bed file for midpoint method
+        """generate BED file for midpoint method
 
         the format is as follows:
         #chrom	start	end	hap1	hap2	parental_file
@@ -119,8 +119,8 @@ class BedGenerator():
         false positive was in the plus or minus sequence
         """
         print('[readcomb] generating bed for midpoint method filtering...')
-        plus_reader = rc.pairs_creation(self.false_plus, self.vcf_fname)
-        minus_reader = rc.pairs_creation(self.false_minus, self.vcf_fname)
+        plus_reader = pairs_creation(self.false_plus, self.vcf_fname)
+        minus_reader = pairs_creation(self.false_minus, self.vcf_fname)
 
         f = open(self.bed_fname, 'w')
         fieldnames = ['#chrom', 'start', 'end', 'hap1', 'hap2', 'parental_file']
@@ -156,7 +156,7 @@ class BedGenerator():
     
 
     def _generate_overlap_bed(self):
-        """generate bed file for overlap method
+        """generate BED file for overlap method
 
         the format is as follows:
         #chrom	start	end	parental_file	call	detection
@@ -166,9 +166,9 @@ class BedGenerator():
         interest in full, while call contains the recombination event the false
         positive was called as
         """
-        print('[readcomb] generating bed for midpoint method filtering...')
-        plus_reader = rc.pairs_creation(self.false_plus, self.vcf_fname)
-        minus_reader = rc.pairs_creation(self.false_minus, self.vcf_fname)
+        print('[readcomb] generating bed for overlap method filtering...')
+        plus_reader = pairs_creation(self.false_plus, self.vcf_fname)
+        minus_reader = pairs_creation(self.false_minus, self.vcf_fname)
 
         f = open(self.bed_fname, 'w')
         fieldnames = ['#chrom', 'start', 'end', 'parental_file', 'call', 'detection']
@@ -208,8 +208,8 @@ class BedGenerator():
         filename provided to self.bed_fname
         """
         print('[readcomb] generating bed for nuclear method filtering...')
-        plus_reader = rc.pairs_creation(self.false_plus, self.vcf_fname)
-        minus_reader = rc.pairs_creation(self.false_minus, self.vcf_fname)
+        plus_reader = pairs_creation(self.false_plus, self.vcf_fname)
+        minus_reader = pairs_creation(self.false_minus, self.vcf_fname)
 
         f = open(self.bed_fname, 'w')
         fieldnames = ['#chrom', 'start', 'end']
@@ -385,7 +385,7 @@ class FalsePositiveFilterer():
             'method': self.method, 'fname': self.fname}
 
         # filter
-        reader = rc.pairs_creation(self.fname, self.vcf_fname)
+        reader = pairs_creation(self.fname, self.vcf_fname)
 
         for pair in tqdm(reader, desc=f'filtering {self.fname}'):
             log_row['total_pairs'] += 1
