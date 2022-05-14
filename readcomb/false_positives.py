@@ -17,6 +17,7 @@ import csv
 import argparse
 import ast
 import subprocess
+import datetime
 
 import pysam
 from tqdm import tqdm
@@ -37,9 +38,9 @@ def arg_parser():
 
     parser.add_argument('-f', '--fname', required=True, type=str, 
         help='Cross BAM output by readcomb-filter')
-    parser.add_argument('-fp', '--false_plus', required=True, type=str, 
+    parser.add_argument('-fp', '--false_plus', required=False, type=str, 
         help='False positives from plus parent')
-    parser.add_argument('-fm', '--false_minus', required=True, type=str, 
+    parser.add_argument('-fm', '--false_minus', required=False, type=str, 
         help='False positives from minus parent')
     parser.add_argument('-v', '--vcf', required=True, type=str, 
         help='VCF with calls for cross of interest')
@@ -49,11 +50,11 @@ def arg_parser():
         help='Where to save false phase change bed file [optional]')
     parser.add_argument('--false_bed_in', required=False, type=str, 
         help='Bed file of false phase changes to use, if already generated [optional]')
-    parser.add_argument('--log', required=False, type=str, 
+    parser.add_argument('--log', required=True, type=str, default='fp.log',
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.1')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.2')
 
     return parser
 
@@ -233,7 +234,7 @@ class BedGenerator():
         print('[readcomb] initial bed generated - reducing...')
         self.sort_tabix_bed(tabix_bed=False) # creates sorted bed without tabixing
         with open(self.bed_fname + 'reduced', 'w') as f_out:
-            writer = csv.DictWriter(f, delimiter='\t', fieldnames=fieldnames)
+            writer = csv.DictWriter(f_out, delimiter='\t', fieldnames=fieldnames)
             writer.writeheader()
             with open(self.bed_fname, 'r') as f_in:
                 reader = csv.reader(f_in, delimiter='\t')
@@ -245,6 +246,8 @@ class BedGenerator():
                 for line in tqdm(reader, desc='reducing overlapping intervals'):
                     chrom = line[0]
                     start, end = [int(n) for n in line[1:]]
+                    if not prev_chrom:
+                        prev_chrom = chrom
 
                     # new chr started on line
                     if chrom != prev_chrom:
@@ -254,6 +257,7 @@ class BedGenerator():
                             'end': prev_end})
                         left_bound = start
                         prev_end = end
+                        prev_chrom = None
                         continue
                     # current read overlaps with previous - extend
                     elif start <= prev_end <= end: 
@@ -320,7 +324,7 @@ class BedGenerator():
 
 
 class FalsePositiveFilterer():
-    def __init__(fname, method, vcf_fname, tabix_reader, log, out):
+    def __init__(self, fname, method, vcf_fname, tabix_reader, out, log):
         """Use generated BED file to filter out false positive reads
 
         Three available methods:
@@ -344,10 +348,10 @@ class FalsePositiveFilterer():
             path to VCF used to call recombination events
         tabix_reader : pysam.libctabix.TabixFile
             path to bed outfile
-        log : str
-            path to log file
         out : str
             path to output SAM to write filtered reads to
+        log : str
+            path to log file
         """
         self.fname = fname
         self.method = method
@@ -361,27 +365,51 @@ class FalsePositiveFilterer():
         self.writer = pysam.AlignmentFile(out, 'wh', template=bam_template)
 
     def filter_false_positives(self):
-        print(f'[readcomb] filtering reads with {method} method')
+        print(f'[readcomb] filtering {self.fname} with {self.method} method')
         print(f'[readcomb] using {self.bed_fname} as false positive lookup')
+
+        # set up log
+        needs_header = bool(not os.path.isfile(self.log))
+        log_f = open(self.log, 'a')
+        log_writer = csv.DictWriter(
+            log_f, delimiter='\t', 
+            fieldnames=[
+                'time', 'total_pairs', 'pairs_kept', 
+                'pairs_removed', 'no_phase_change', 
+                'perc_kept', 'method', 'fname'])
+        if needs_header:
+            log_writer.writeheader()
+        log_row = {
+            'time': datetime.datetime.now(), 'total_pairs': 0, 'pairs_kept': 0, 
+            'pairs_removed': 0, 'no_phase_change': 0, 'perc_kept': 0.0, 
+            'method': self.method, 'fname': self.fname}
+
+        # filter
         reader = rc.pairs_creation(self.fname, self.vcf_fname)
 
         for pair in tqdm(reader, desc=f'filtering {self.fname}'):
+            log_row['total_pairs'] += 1
             pair.classify(masking=0)
+            if pair.call == 'no_phase_change':
+                log_row['no_phase_change'] += 1
+                continue
             chrom = pair.rec_1.reference_name
             start, end = pair.detection[0][1], pair.detection[-1][1]
             false_lookup = list(set([
                 line for line in self.tabix_reader.fetch(chrom, start, end)]))
-            if not false_reads: # no false phase changes at all
+            if not false_lookup: # no false phase changes at all
+                log_row['pairs_kept'] += 1 
                 self.writer.write(pair.rec_1)
                 self.writer.write(pair.rec_2)
                 continue # no need to apply a filter at all
 
             # if false reads in vicinity - filter
-            if method == 'midpoint':
-                passed = self._filter_midpoint(chrom, start, end)
-            elif method == 'overlap':
-                passed = self._filter_overlap(chrom, start, end)
-            elif method == 'nuclear':
+            if self.method == 'midpoint':
+                passed = self._filter_midpoint(pair, chrom, start, end, false_lookup)
+            elif self.method == 'overlap':
+                passed = self._filter_overlap(pair, chrom, start, end, false_lookup)
+            elif self.method == 'nuclear':
+                log_row['pairs_removed'] += 1
                 continue # nuclear option means indiscriminately ignoring all overlapping reads
             else:
                 raise ValueError(
@@ -389,12 +417,18 @@ class FalsePositiveFilterer():
 
             # if filter was applied and read did not match false read - write
             if passed:
+                log_row['pairs_kept'] += 1
                 self.writer.write(pair.rec_1)
                 self.writer.write(pair.rec_2)
                 continue
+            elif not passed:
+                log_row['pairs_removed'] += 1
+
+        log_row['perc_kept'] = round(log_row['pairs_kept'] / log_row['total_pairs'], 3)
+        log_writer.writerow(log_row)
                 
 
-    def _filter_midpoint(pair, chrom, start, end, false_lookup):
+    def _filter_midpoint(self, pair, chrom, start, end, false_lookup):
         # reduce pair.detection output for comparison
         detection_reduced = [(hap, pos) for hap, pos, base in pair.detection]
         # iterate over false reads
@@ -408,7 +442,7 @@ class FalsePositiveFilterer():
         return True # only returned if all false phase changes aren't matched
 
 
-    def _filter_overlap(self, pair, chrom, start, end, false_reads):
+    def _filter_overlap(self, pair, chrom, start, end, false_lookup):
         for false_read in false_lookup:
             chrom, pos1, pos2, hap1, hap2, fp_detection = false_read.split('\t')
             false_detection = ast.literal_eval(fp_detection)
@@ -417,7 +451,7 @@ class FalsePositiveFilterer():
                     [v[1] for v in false_detection])
             detection_filtered = [
                 var for var in pair.detection if var[1] in overlap_sites]
-            if all(var in false_read.detection for var in pair.detection):
+            if all(var in false_detection for var in pair.detection):
                 return False # all overlapping sites are the same in the false read
             else:
                 continue
@@ -454,7 +488,7 @@ def handle_bed(args):
 
     bed_generator.generate_bed() # will use method specified above
     bed_generator.sort_tabix_bed()
-    tabix_reader = pysam.TabixFile(args.false_bed_out)
+    tabix_reader = pysam.TabixFile(args.false_bed_out + '.gz')
     return tabix_reader
 
 
@@ -467,9 +501,10 @@ def main():
         method=args.method,
         vcf_fname=args.vcf,
         tabix_reader=tabix_reader,
-        out=args.out)
-    # TODO: incorporate logging
+        out=args.out,
+        log=args.log)
     filterer.filter_false_positives()
+    print(f'[rcmb] written to {args.out}')
 
 
 if __name__ == '__main__':
