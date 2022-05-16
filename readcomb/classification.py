@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.3'
+__version__ = '0.3.4'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -374,11 +374,11 @@ class Pair():
             if len(self.detection_2) == 0:
                 if variant == self.detection_1[-1]:
                     self.condensed[-1][2] = self.rec_1.reference_start + \
-                        self.rec_1.query_alignment_length
+                        len(self.segment_1)
             else:
                 if variant == self.detection_2[-1]:
                     self.condensed[-1][2] = self.rec_2.reference_start + \
-                        self.rec_2.query_alignment_length
+                        len(self.segment_2)
 
         # this occurs during false positive phase changes when reads overlap
         if any(start == end for hap, start, end in self.condensed):
@@ -398,7 +398,7 @@ class Pair():
         else:
             self.call = 'no_phase_change'
 
-        if self.rec_2.reference_start + self.rec_2.query_alignment_length \
+        if self.rec_2.reference_start + len(self.segment_2) \
             - self.rec_1.reference_start < masking * 2:
 
             print('Masking size too large for pair: ' + self.rec_1.query_name)
@@ -407,7 +407,7 @@ class Pair():
             return
 
         mask_start = self.rec_1.reference_start + masking
-        mask_end = self.rec_2.reference_start + self.rec_2.query_alignment_length - masking
+        mask_end = self.rec_2.reference_start + len(self.segment_2) - masking
 
         # create masked_condensed from condensed
         # [(haplotype, beginning, end), ...]
@@ -457,7 +457,6 @@ class Pair():
 
         # set descriptive + quality attributes post-classification
         self._describe(haplotypes, vcf)
-        self.midpoint, self.relative_midpoint = self.get_midpoint()
 
         # if gene conversion - set descriptive info
         if 'gene_conversion' in [self.call, self.masked_call]:
@@ -466,6 +465,8 @@ class Pair():
             self.gene_conversion_len = 'N/A'
             self.converted_haplotype = 'N/A'
             self.converted_variants = 'N/A'
+
+        self.midpoint, self.relative_midpoint = self.get_midpoint()
 
     def _describe(self, haplotypes, vcf):
         """
@@ -722,14 +723,24 @@ class Pair():
         if self.call == 'no_phase_change':
             # midpoint is middle of two paired reads if no phase change
             start = self.rec_1.reference_start
-            end = self.rec_2.reference_start + self.rec_2.query_alignment_length
+            end = self.rec_2.reference_start + len(self.segment_2)
             self.midpoint = int((start + end) / 2)
             self.relative_midpoint = -1
-        elif self.call in ['cross_over', 'gene_conversion']:
+        elif self.call == 'cross_over':
             # (X, begin, end), (Y, begin, end): end of X = beginning of Y = midpoint
             self.midpoint = self.condensed[0][2]
             # get relative midpoint
-            start = self.condensed[0][2]
+            start = self.condensed[0][1]
+            end = self.condensed[-1][2]
+            self.relative_midpoint = round(
+                (self.midpoint - self.rec_1.reference_start) / (end - start), 3)
+        elif self.call == 'cross_over':
+            # (X, begin, end), (Y, begin, end), (X', begin, end)
+            # midpoint of Y tract
+            self.midpoint = sum([
+                [start, end] for hap, start, end in self.condensed
+                if hap == self.converted_haplotype][0]) / 2
+            start = self.condensed[0][1]
             end = self.condensed[-1][2]
             self.relative_midpoint = round(
                 (self.midpoint - self.rec_1.reference_start) / (end - start), 3)

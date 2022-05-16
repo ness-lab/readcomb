@@ -54,7 +54,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.3')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.4')
 
     return parser
 
@@ -370,7 +370,7 @@ class FalsePositiveFilterer():
 
         # set up log
         needs_header = bool(not os.path.isfile(self.log))
-        log_f = open(self.log, 'a')
+        log_f = open(self.log, 'a', newline='')
         log_writer = csv.DictWriter(
             log_f, delimiter='\t', 
             fieldnames=[
