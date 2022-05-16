@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.5'
+__version__ = '0.3.6'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -620,19 +620,24 @@ class Pair():
                 # since these may differ
                 subseq = re.sub(r'[0-9]{0,3}$', '', m1[i:])
                 # test subseqs
-                if subseq in m2:
+                if subseq in m2 and len(subseq) != 1: # not last possible base
                     overlap_seq = subseq
                     break
             if not overlap_seq: # happens if the segment removed in re.sub above was the overlap
                 if m2 in m1[-3:]:
                     overlap_seq = m2
+                else:
+                    # overlap still not detected - just keep both
+                    left_region = m1
+                    right_region = m2
 
-            # get regions on either side of overlap
-            left_region = m1[:m1.index(overlap_seq)]
-            right_region = re.sub(
-                r'^[0-9]{0,3}', '',
-                m2[m2.index(overlap_seq) + len(overlap_seq):]
-            )
+            # get regions on either side of overlap if not assigned just above
+            if not left_region and not right_region:
+                left_region = m1[:m1.index(overlap_seq)]
+                right_region = re.sub(
+                    r'^[0-9]{0,3}', '',
+                    m2[m2.index(overlap_seq) + len(overlap_seq):]
+                )
             mismatches = 0
             for region in [left_region, overlap_seq, right_region]:
                 mismatches += len(
