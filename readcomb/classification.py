@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.4'
+__version__ = '0.3.5'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -597,6 +597,20 @@ class Pair():
             return (rec_1_mismatches + rec_2_mismatches) / len(self.variants_filt)
 
         elif self.overlap:
+            # if rec2 is entirely 'contained' by rec1 - just do rec1
+            if (
+                self.rec_1.reference_start <= self.rec_2.reference_start and
+                self.rec_2.reference_end < self.rec_1.reference_end
+            ):
+                m1 = self.rec_1.get_tag('MD')
+                mismatches = len(
+                    re.findall(
+                        r'[ACGT]', re.sub(r'\^[ACGT]+', '', self.rec_1.get_tag('MD'))
+                        )
+                    )
+                return mismatches / len(self.variants_filt)
+
+            # otherwise - handle overlap as normal
             m1 = self.rec_1.get_tag('MD')
             m2 = self.rec_2.get_tag('MD')
 
