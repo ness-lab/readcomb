@@ -37,7 +37,7 @@ def arg_parser():
         usage='readcomb-fp [options]')
 
     parser.add_argument('-f', '--fname', required=True, type=str, 
-        help='Cross BAM output by readcomb-filter')
+        help='Cross SAM output by readcomb-filter')
     parser.add_argument('-fp', '--false_plus', required=False, type=str, 
         help='False positives from plus parent')
     parser.add_argument('-fm', '--false_minus', required=False, type=str, 
@@ -54,7 +54,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.7')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.8')
 
     return parser
 
@@ -479,6 +479,8 @@ def handle_bed(args):
         return tabix_reader
 
     # if not - generate lookup bed file
+    if args.false_bed_out.endswith('.gz'):
+        args.false_bed_out = args.false_bed_out.rstrip('.gz')
     bed_generator = BedGenerator(
         false_plus=args.false_plus, 
         false_minus=args.false_minus,
@@ -504,7 +506,7 @@ def main():
         out=args.out,
         log=args.log)
     filterer.filter_false_positives()
-    print(f'[rcmb] written to {args.out}')
+    print(f'[readcomb] written to {args.out}')
 
 
 if __name__ == '__main__':

@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.7'
+__version__ = '0.3.8'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
