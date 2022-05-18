@@ -54,7 +54,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.8')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.9')
 
     return parser
 
@@ -395,8 +395,17 @@ class FalsePositiveFilterer():
                 continue
             chrom = pair.rec_1.reference_name
             start, end = pair.detection[0][1], pair.detection[-1][1]
-            false_lookup = list(set([
-                line for line in self.tabix_reader.fetch(chrom, start, end)]))
+
+            # handle tabix issues if organelle/contig region iterator can't be made
+            try:
+                false_lookup = list(set([
+                    line for line in self.tabix_reader.fetch(chrom, start, end)]))
+            except ValueError as e:
+                if any(region in e.args[0] for region in ['cpDNA', 'mtDNA', 'contig']):
+                    false_lookup = []
+                else:
+                    raise e
+
             if not false_lookup: # no false phase changes at all
                 log_row['pairs_kept'] += 1 
                 self.writer.write(pair.rec_1)
