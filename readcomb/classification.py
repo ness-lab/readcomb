@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.9'
+__version__ = '0.3.10'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -556,7 +556,7 @@ class Pair():
             tract for tract in self.condensed 
             if tract[0] == self.converted_haplotype][0][1:])
         if indels:
-            self.indel_proximity = abs(min(np.concatenate(
+            self.indel_proximity = min(abs(np.concatenate(
                 [np.array(indel[1:]) - np.array(conversion_tract)
                  for indel in indels])))
         else:
@@ -755,7 +755,7 @@ class Pair():
             end = self.condensed[-1][2]
             self.relative_midpoint = round(
                 (self.midpoint - self.rec_1.reference_start) / (end - start), 3)
-        elif self.call == 'cross_over':
+        elif self.call == 'gene_conversion':
             # (X, begin, end), (Y, begin, end), (X', begin, end)
             # midpoint of Y tract
             self.midpoint = sum([
