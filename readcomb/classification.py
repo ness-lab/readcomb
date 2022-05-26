@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.11'
+__version__ = '0.3.12'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -760,7 +760,7 @@ class Pair():
             # midpoint of Y tract
             self.midpoint = sum([
                 [start, end] for hap, start, end in self.condensed
-                if hap == self.converted_haplotype]) / 2
+                if hap == self.converted_haplotype][0]) / 2
             start = self.condensed[0][1]
             end = self.condensed[-1][2]
             self.relative_midpoint = round(
