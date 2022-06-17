@@ -54,7 +54,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.13')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.14')
 
     return parser
 

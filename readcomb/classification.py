@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.13'
+__version__ = '0.3.14'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -183,6 +183,7 @@ class Pair():
         self.overlap_disagree = None
         self.variants_per_haplotype = -1
         self.min_variants_in_haplotype = -1
+        self.outer_bound = -1
         self.variant_skew = -1
         self.mismatch_variant_ratio = -1
         self.variant_counts = None
