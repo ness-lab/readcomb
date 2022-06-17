@@ -45,7 +45,7 @@ def arg_parser():
         help='Filter quality for individual bases in a sequence (default: 30)')
     parser.add_argument('--min_mapq', required=False, type=int, default=40,
         help='Minimum MAPQ for read consideration (default: 40)')
-    parser.add_argument('--version', action='version', version='readcomb 0.3.12')
+    parser.add_argument('--version', action='version', version='readcomb 0.3.13')
 
     return parser
 

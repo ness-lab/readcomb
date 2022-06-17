@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.12'
+__version__ = '0.3.13'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -170,6 +170,7 @@ class Pair():
         self.detection_1 = None
         self.detection_2 = None
         self.detection = None
+        self.masked_detection = None
         self.no_match = None
         self.condensed = None
         self.masked_condensed = None
@@ -346,44 +347,9 @@ class Pair():
         # set no_match variable if there are unmatched variants
         self.no_match = any([v[0] == 'N' for v in self.detection])
 
-        # simplification of results
+        # simplification of results - creating condensed hap view
         # [(haplotype, beginning, end), ...]
-        self.condensed = []
-
-        for variant in self.detection:
-            haplotype, location, base = variant
-
-            # first variant
-            if len(self.condensed) == 0:
-                self.condensed.append(
-                    [haplotype, self.rec_1.reference_start, self.rec_1.reference_start])
-
-            # if same haplotype - extend segment for correct eventual midpoint calc
-            elif self.condensed[-1][0] == haplotype:
-                self.condensed[-1][2] = location
-
-            # different haplotype
-            elif self.condensed[-1][0] != haplotype:
-                # middle of previous variant location and current variant
-                # rounding down so it's not a decimal
-                midpoint = int((self.condensed[-1][2] + location) // 2)
-                self.condensed[-1][2] = midpoint
-                self.condensed.append([haplotype, midpoint, midpoint])
-
-            # last variant
-            if len(self.detection_2) == 0:
-                if variant == self.detection_1[-1]:
-                    self.condensed[-1][2] = self.rec_1.reference_start + \
-                        len(self.segment_1)
-            else:
-                if variant == self.detection_2[-1]:
-                    self.condensed[-1][2] = self.rec_2.reference_start + \
-                        len(self.segment_2)
-
-        # this occurs during false positive phase changes when reads overlap
-        if any(start == end for hap, start, end in self.condensed):
-            for false_hap in [h for h in self.condensed if h[1] == h[2]]:
-                self.condensed.remove(false_hap)
+        self.condensed = self._create_condensed(self.detection)
 
         # create list of just haplotype information without range from condensed
         haplotypes = [tupl[0] for tupl in self.condensed if tupl[0] != 'N']
@@ -408,24 +374,12 @@ class Pair():
 
         mask_start = self.rec_1.reference_start + masking
         mask_end = self.rec_2.reference_start + len(self.segment_2) - masking
+        self.masked_detection = [
+            v for v in self.detection if mask_start < v[1] < mask_end]
 
-        # create masked_condensed from condensed
+        # create masked_condensed from masked detection
         # [(haplotype, beginning, end), ...]
-        self.masked_condensed = []
-
-        for phase in self.condensed:
-            # one phase contains both mask start and end
-            if phase[1] <= mask_start and mask_end <= phase[2]:
-                self.masked_condensed.append([phase[0], mask_start, mask_end])
-            # phase contains only mask start
-            elif phase[1] <= mask_start < phase[2]:
-                self.masked_condensed.append([phase[0], mask_start, phase[2]])
-            # phase contains only mask end
-            elif phase[1] < mask_end <= phase[2]:
-                self.masked_condensed.append([phase[0], phase[1], mask_end])
-            # phase is in the middle
-            elif mask_start < phase[1] and phase[2] < mask_end:
-                self.masked_condensed.append(phase)
+        self.masked_condensed = self._create_condensed(self.masked_detection)
 
         # create list of just haplotype information no range from condensed
         masked_haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
@@ -468,6 +422,55 @@ class Pair():
 
         self.midpoint, self.relative_midpoint = self.get_midpoint()
 
+    def _create_condensed(self, detection):
+        """
+        Internal method to generate haplotype representation in
+        ``Pair.condensed``.
+
+        Parameters
+        ----------
+        detection : list
+            list containing variants in downstream_phase_detection format
+        """
+        condensed = []
+
+        for variant in detection:
+            haplotype, location, base = variant
+
+            # first variant
+            if len(condensed) == 0:
+                condensed.append(
+                    [haplotype, self.rec_1.reference_start, self.rec_1.reference_start])
+
+            # if same haplotype - extend segment for correct eventual midpoint calc
+            elif condensed[-1][0] == haplotype:
+                condensed[-1][2] = location
+
+            # different haplotype
+            elif condensed[-1][0] != haplotype:
+                # middle of previous variant location and current variant
+                # rounding down so it's not a decimal
+                midpoint = int((condensed[-1][2] + location) // 2)
+                condensed[-1][2] = midpoint
+                condensed.append([haplotype, midpoint, midpoint])
+
+            # last variant
+            if len(self.detection_2) == 0:
+                if variant == self.detection_1[-1]:
+                    condensed[-1][2] = self.rec_1.reference_start + \
+                        len(self.segment_1)
+            else:
+                if variant == self.detection_2[-1]:
+                    condensed[-1][2] = self.rec_2.reference_start + \
+                        len(self.segment_2)
+
+        # this occurs during false positive phase changes when reads overlap
+        if any(start == end for hap, start, end in condensed):
+            for false_hap in [h for h in condensed if h[1] == h[2]]:
+                condensed.remove(false_hap)
+        
+        return condensed
+
     def _describe(self, haplotypes, vcf):
         """
         Internal method to calculate various attributes of ``Pair``. Sets
@@ -480,6 +483,8 @@ class Pair():
           haplotype
         - min_variants_in_haplotype - number of variants in least
           well-supported haplotype
+        - outer_bound - relative location of 'most outer' variant involved
+          in a phase change
 
         Parameters
         ----------
@@ -508,6 +513,28 @@ class Pair():
                 len(list(grouper)) for value, grouper
                 in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
+
+        if self.call != 'no_phase_change':
+            phase_change_variants = [
+                [self.detection[i][1], self.detection[i+1][1]]
+                for i in range(len(self.detection) - 1)
+                if self.detection[i][0] != self.detection[i+1][0]]
+            phase_change_variants = sorted(list(set(
+                [pos for var_pair in phase_change_variants for pos in var_pair]
+            )))
+            # only check leftmost and rightmost variants
+            if (
+                phase_change_variants[0] - self.condensed[0][1] < \
+                abs(phase_change_variants[-1] - self.condensed[-1][2])
+            ):
+                self.outer_bound = round(
+                    (phase_change_variants[0] - self.rec_1.reference_start) / \
+                    (self.condensed[-1][2] - self.condensed[0][1]), 3)
+            else:
+                self.outer_bound = round(
+                    (phase_change_variants[-1] - self.rec_1.reference_start) / \
+                    (self.condensed[-1][2] - self.condensed[0][1]), 3)
+            
 
     def _describe_gene_conversion(self, vcf):
         """
