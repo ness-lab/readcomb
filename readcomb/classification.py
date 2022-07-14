@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.14'
+__version__ = '0.3.15'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -184,6 +184,7 @@ class Pair():
         self.variants_per_haplotype = -1
         self.min_variants_in_haplotype = -1
         self.outer_bound = -1
+        self.min_end_proximity = -1
         self.variant_skew = -1
         self.mismatch_variant_ratio = -1
         self.variant_counts = None
@@ -437,6 +438,8 @@ class Pair():
 
         for variant in detection:
             haplotype, location, base = variant
+            if haplotype == 'N':
+                continue
 
             # first variant
             if len(condensed) == 0:
@@ -486,6 +489,8 @@ class Pair():
           well-supported haplotype
         - outer_bound - relative location of 'most outer' variant involved
           in a phase change
+        - min_end_proximity - lowest distance in bp between a variant involved in a
+          phase change and the end of the read it's on
 
         Parameters
         ----------
@@ -535,6 +540,13 @@ class Pair():
                 self.outer_bound = round(
                     (phase_change_variants[-1] - self.rec_1.reference_start) / \
                     (self.condensed[-1][2] - self.condensed[0][1]), 3)
+
+            # get min_end_proximity
+            read_bounds = [
+                self.rec_1.reference_start, self.rec_1.reference_start + len(self.segment_1),
+                self.rec_2.reference_start, self.rec_2.reference_start + len(self.segment_2)]
+            self.min_end_proximity = min(
+                [abs(pos - bound) for bound in read_bounds for pos in phase_change_variants])
             
 
     def _describe_gene_conversion(self, vcf):
@@ -726,10 +738,11 @@ class Pair():
         # if there's overlap, check whether overlapping sites anywhere in read disagree
         if self.overlap:
             # identify overlapping region
-            region = [self.rec_2.reference_start, self.rec_1.reference_start + len(self.segment_1)]
+            overlap_size = self.rec_1.reference_start + len(self.segment_1) - self.rec_2.reference_start
             idx = self.rec_2.reference_start - self.rec_1.reference_start
-            segment_1 = self.segment_1[idx:region[1]]
-            segment_2 = self.segment_2[0:len(segment_1)]
+            region = [idx, idx + overlap_size] # idx for segment 1
+            segment_1 = self.segment_1[region[0]:region[1]]
+            segment_2 = self.segment_2[0:overlap_size]
             if segment_1 != segment_2: # compare full strings
                 self.overlap_disagree = False
             else:
@@ -760,7 +773,7 @@ class Pair():
 
         # return midpoint if it's already been called
         if self.midpoint:
-            return self.midpoint
+            return self.midpoint, self.relative_midpoint
 
         # classify if read has not been already
         if not hasattr(self, 'call'):
