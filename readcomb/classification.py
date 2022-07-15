@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.15'
+__version__ = '0.3.16'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -187,10 +187,11 @@ class Pair():
         self.min_end_proximity = -1
         self.variant_skew = -1
         self.mismatch_variant_ratio = -1
+        self.indel_proximity = -1
         self.variant_counts = None
         self.converted_haplotype = None
         self.converted_variants = None
-        self.indel_proximity = None
+        self.conversion_tract = None
 
     def __str__(self):
         """
@@ -421,6 +422,7 @@ class Pair():
             self.gene_conversion_len = 'N/A'
             self.converted_haplotype = 'N/A'
             self.converted_variants = 'N/A'
+            self.conversion_tract = 'N/A'
 
         self.midpoint, self.relative_midpoint = self.get_midpoint()
 
@@ -491,6 +493,8 @@ class Pair():
           in a phase change
         - min_end_proximity - lowest distance in bp between a variant involved in a
           phase change and the end of the read it's on
+        - indel_proximity - lowest distance in bp between a variant involved in
+          a phase change and an indel
 
         Parameters
         ----------
@@ -520,7 +524,8 @@ class Pair():
                 in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
 
-        if self.call != 'no_phase_change':
+            # get variants involved in phase change(s)
+            # used for outer_bound, min_end_proximity, indel_proximity
             phase_change_variants = [
                 [self.detection[i][1], self.detection[i+1][1]]
                 for i in range(len(self.detection) - 1)
@@ -528,7 +533,8 @@ class Pair():
             phase_change_variants = sorted(list(set(
                 [pos for var_pair in phase_change_variants for pos in var_pair]
             )))
-            # only check leftmost and rightmost variants
+
+            # only check leftmost and rightmost variants to assign outer bound
             if (
                 phase_change_variants[0] - self.condensed[0][1] < \
                 abs(phase_change_variants[-1] - self.condensed[-1][2])
@@ -547,6 +553,28 @@ class Pair():
                 self.rec_2.reference_start, self.rec_2.reference_start + len(self.segment_2)]
             self.min_end_proximity = min(
                 [abs(pos - bound) for bound in read_bounds for pos in phase_change_variants])
+
+            # get indels for indel proximity calculation
+            indels = []
+            for rec in [self.rec_1, self.rec_2]:
+                idx = rec.reference_start
+                for op, basecount in rec.cigartuples:
+                    if op == 0:
+                        idx += basecount
+                    elif op == 1:
+                        indels.append(['ins', idx, idx])
+                    elif op == 2:
+                        indels.append(['del', idx, idx + basecount])
+            # overlapping reads may have the same indel register twice
+            indels = list(indel for indel, _ in itertools.groupby(indels)) 
+
+            if indels:
+                self.indel_proximity = min(abs(np.concatenate(
+                    [np.array(phase_change_variants) - pos
+                     for indel in indels
+                     for pos in indel[1:]])))
+            else:
+                self.indel_proximity = 'N/A'
             
 
     def _describe_gene_conversion(self, vcf):
@@ -560,8 +588,7 @@ class Pair():
           as determined by midpoint method
         - converted_haplotype - which haplotype was 'converted to'
         - converted_variants - which variants were converted in the tract
-        - indel_proximity - how close the nearest indel is to the converted tract, 
-          if any
+        - conversion_tract - 2-length list with bounds of conversion tract
         """
         self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
 
@@ -578,30 +605,10 @@ class Pair():
         elif self.converted_haplotype == '2':
             self.converted_haplotype = vcf.samples[1]
 
-        # indel proximity
-        indels = []
-        for rec in [self.rec_1, self.rec_2]:
-            idx = rec.reference_start
-            for op, basecount in rec.cigartuples:
-                if op == 0:
-                    idx += basecount
-                elif op == 1:
-                    indels.append(['ins', idx, idx])
-                elif op == 2:
-                    indels.append(['del', idx, idx + basecount])
-        # overlapping reads may have the same indel register twice
-        indels = list(indel for indel, _ in itertools.groupby(indels)) 
-
-        conversion_tract = np.array([
+        # get conversion tract
+        self.conversion_tract = np.array([
             tract for tract in self.condensed 
             if tract[0] == self.converted_haplotype][0][1:])
-        if indels:
-            self.indel_proximity = min(abs(np.concatenate(
-                [np.array(indel[1:]) - np.array(conversion_tract)
-                 for indel in indels])))
-        else:
-            self.indel_proximity = 'N/A'
-        
 
     def _get_mismatch_variant_ratio(self):
         """
