@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.16'
+__version__ = '0.3.17'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -187,7 +187,9 @@ class Pair():
         self.min_end_proximity = -1
         self.variant_skew = -1
         self.mismatch_variant_ratio = -1
+        self.indels = None
         self.indel_proximity = -1
+        self.proximate_indel_length = -1
         self.variant_counts = None
         self.converted_haplotype = None
         self.converted_variants = None
@@ -369,8 +371,7 @@ class Pair():
 
         if self.rec_2.reference_start + len(self.segment_2) \
             - self.rec_1.reference_start < masking * 2:
-
-            print('Masking size too large for pair: ' + self.rec_1.query_name)
+            # masking size is too large for pair
             self.masked_condensed = None
             self.masked_call = None
             return
@@ -493,8 +494,11 @@ class Pair():
           in a phase change
         - min_end_proximity - lowest distance in bp between a variant involved in a
           phase change and the end of the read it's on
+        - indels - list of indels
         - indel_proximity - lowest distance in bp between a variant involved in
           a phase change and an indel
+        - proximate_indel_length - if indel_proximity != -1, size in bp of
+          nearest indel
 
         Parameters
         ----------
@@ -518,14 +522,14 @@ class Pair():
 
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps
-        if 'no_phase_change' not in set([self.call, self.masked_call]):
+        if self.call != 'no_phase_change':
             self.min_variants_in_haplotype = min(
                 len(list(grouper)) for value, grouper
                 in itertools.groupby([hap for hap, position, allele in self.detection])
                 )
 
             # get variants involved in phase change(s)
-            # used for outer_bound, min_end_proximity, indel_proximity
+            # used for outer_bound, min_end_proximity, indel_proximity, proximate_indel_length
             phase_change_variants = [
                 [self.detection[i][1], self.detection[i+1][1]]
                 for i in range(len(self.detection) - 1)
@@ -554,7 +558,7 @@ class Pair():
             self.min_end_proximity = min(
                 [abs(pos - bound) for bound in read_bounds for pos in phase_change_variants])
 
-            # get indels for indel proximity calculation
+            # get indels for calculation of indel attributes
             indels = []
             for rec in [self.rec_1, self.rec_2]:
                 idx = rec.reference_start
@@ -562,19 +566,31 @@ class Pair():
                     if op == 0:
                         idx += basecount
                     elif op == 1:
-                        indels.append(['ins', idx, idx])
+                        # type, ref_start_idx, ref_end_idx, indel_length
+                        indels.append(['ins', idx, idx, basecount])
                     elif op == 2:
-                        indels.append(['del', idx, idx + basecount])
+                        indels.append(['del', idx, idx + basecount, basecount])
             # overlapping reads may have the same indel register twice
-            indels = list(indel for indel, _ in itertools.groupby(indels)) 
+            self.indels = list(indel for indel, _ in itertools.groupby(indels)) 
 
             if indels:
+
                 self.indel_proximity = min(abs(np.concatenate(
                     [np.array(phase_change_variants) - pos
-                     for indel in indels
-                     for pos in indel[1:]])))
+                     for indel in self.indels
+                     for pos in indel[1:3]])))
+
+                # length of most proximate indel
+                for indel in self.indels:
+                    diffs = np.concatenate(
+                        [abs(np.array(phase_change_variants) - pos)
+                        for pos in indel[1:3]])
+                    if self.indel_proximity in diffs:
+                        self.proximate_indel_length = indel[-1]
+                        break
             else:
-                self.indel_proximity = 'N/A'
+                self.indel_proximity = -1
+                self.proximate_indel_length = -1
             
 
     def _describe_gene_conversion(self, vcf):
