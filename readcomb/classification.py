@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.3.17'
+__version__ = '0.4.0'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -805,13 +805,13 @@ class Pair():
         # simplification of results
         # [(haplotype, beginning, end), ...]
 
-        if self.masked_call == 'no_phase_change':
+        if self.call == 'no_phase_change':
             # midpoint is middle of two paired reads if no phase change
             start = self.rec_1.reference_start
             end = self.rec_2.reference_start + len(self.segment_2)
             self.midpoint = int((start + end) / 2)
             self.relative_midpoint = -1
-        elif self.masked_call == 'cross_over':
+        elif self.call == 'cross_over':
             # (X, begin, end), (Y, begin, end): end of X = beginning of Y = midpoint
             self.midpoint = self.condensed[0][2]
             # get relative midpoint
@@ -819,7 +819,7 @@ class Pair():
             end = self.condensed[-1][2]
             self.relative_midpoint = round(
                 (self.midpoint - self.rec_1.reference_start) / (end - start), 3)
-        elif self.masked_call == 'gene_conversion':
+        elif self.call == 'gene_conversion':
             # (X, begin, end), (Y, begin, end), (X', begin, end)
             # midpoint of Y tract
             self.midpoint = sum([
@@ -834,7 +834,7 @@ class Pair():
             start = self.condensed[0][2]
             end = self.condensed[-1][1]
             self.midpoint = (start + end) / 2
-            self.relative_midpoint = -1
+            self.relative_midpoint = 0.5
 
         # return in samtools format
         self.midpoint = f'{self.rec_1.reference_name}:{round(self.midpoint)}'
