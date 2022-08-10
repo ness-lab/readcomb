@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.0'
+__version__ = '0.4.1'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -108,13 +108,13 @@ def downstream_phase_detection(variants, segment, record, quality):
                 break
 
             if segment[idx] == parent1:
-                detection_results.append(('1', variant.start, parent1))
+                detection_results.append(('1', variant.start, parent1, query_qualities[idx]))
 
             elif segment[idx] == parent2:
-                detection_results.append(('2', variant.start, parent2))
+                detection_results.append(('2', variant.start, parent2, query_qualities[idx]))
 
             else:
-                detection_results.append(('N', variant.start, None))
+                detection_results.append(('N', variant.start, None, query_qualities[idx]))
 
     return detection_results
 
@@ -176,6 +176,7 @@ class Pair():
         self.masked_condensed = None
         self.call = None
         self.masked_call = None
+        self.phase_change_variants = None
         self.gene_conversion_len = None
 
         # quality metrics
@@ -190,6 +191,8 @@ class Pair():
         self.indels = None
         self.indel_proximity = -1
         self.proximate_indel_length = -1
+        self.min_base_qual = -1
+        self.mean_base_qual = -1
         self.variant_counts = None
         self.converted_haplotype = None
         self.converted_variants = None
@@ -281,7 +284,7 @@ class Pair():
             self.rec_1 = pysam.AlignedSegment.fromstring(self.rec_1, header)
             self.rec_2 = pysam.AlignedSegment.fromstring(self.rec_2, header)
 
-    def classify(self, masking=0, quality=30, vcf=None):
+    def classify(self, masking=0, quality=0, vcf=None):
         """
         Determine the type of recombination event that occursed in this read pair.
 
@@ -440,7 +443,7 @@ class Pair():
         condensed = []
 
         for variant in detection:
-            haplotype, location, base = variant
+            haplotype, location, base, qual = variant
             if haplotype == 'N':
                 continue
 
@@ -494,11 +497,14 @@ class Pair():
           in a phase change
         - min_end_proximity - lowest distance in bp between a variant involved in a
           phase change and the end of the read it's on
+        - phase_change_variants - list of phase change variant positions
         - indels - list of indels
         - indel_proximity - lowest distance in bp between a variant involved in
           a phase change and an indel
         - proximate_indel_length - if indel_proximity != -1, size in bp of
           nearest indel
+        - min_base_qual - minimum base qual for a phase change variant
+        - mean_base_qual - mean base qual across phase change variants
 
         Parameters
         ----------
@@ -520,78 +526,85 @@ class Pair():
         if len(self.variant_counts.values()) == 2: # only calc if both haps present
             self.variant_skew = max(self.variant_counts.values()) / min(self.variant_counts.values())
 
+        # subsequent metrics can't be calculated for non-phase-change pairs
+        if self.call == 'no_phase_change':
+            return
+
         # get the lowest number of variants a haplotype has -
         # splits variant list (e.g. ['1', '1', '2', '1']) and gets min variant count across haps
-        if self.call != 'no_phase_change':
-            self.min_variants_in_haplotype = min(
-                len(list(grouper)) for value, grouper
-                in itertools.groupby([hap for hap, position, allele in self.detection])
-                )
+        self.min_variants_in_haplotype = min(
+            len(list(grouper)) for value, grouper
+            in itertools.groupby([hap for hap, position, allele, qual in self.detection])
+            )
 
-            # get variants involved in phase change(s)
-            # used for outer_bound, min_end_proximity, indel_proximity, proximate_indel_length
-            phase_change_variants = [
-                [self.detection[i][1], self.detection[i+1][1]]
-                for i in range(len(self.detection) - 1)
-                if self.detection[i][0] != self.detection[i+1][0]]
-            phase_change_variants = sorted(list(set(
-                [pos for var_pair in phase_change_variants for pos in var_pair]
-            )))
+        # get variants involved in phase change(s)
+        # used for outer_bound, min_end_proximity, indel_proximity, proximate_indel_length
+        phase_change_variants = [
+            [self.detection[i][1], self.detection[i+1][1]]
+            for i in range(len(self.detection) - 1)
+            if self.detection[i][0] != self.detection[i+1][0]]
+        self.phase_change_variants = sorted(list(set(
+            [pos for var_pair in phase_change_variants for pos in var_pair]
+        )))
 
-            # only check leftmost and rightmost variants to assign outer bound
-            if (
-                phase_change_variants[0] - self.condensed[0][1] < \
-                abs(phase_change_variants[-1] - self.condensed[-1][2])
-            ):
-                self.outer_bound = round(
-                    (phase_change_variants[0] - self.rec_1.reference_start) / \
-                    (self.condensed[-1][2] - self.condensed[0][1]), 3)
-            else:
-                self.outer_bound = round(
-                    (phase_change_variants[-1] - self.rec_1.reference_start) / \
-                    (self.condensed[-1][2] - self.condensed[0][1]), 3)
+        # only check leftmost and rightmost variants to assign outer bound
+        if (
+            self.phase_change_variants[0] - self.condensed[0][1] < \
+            abs(self.phase_change_variants[-1] - self.condensed[-1][2])
+        ):
+            self.outer_bound = round(
+                (self.phase_change_variants[0] - self.rec_1.reference_start) / \
+                (self.condensed[-1][2] - self.condensed[0][1]), 3)
+        else:
+            self.outer_bound = round(
+                (self.phase_change_variants[-1] - self.rec_1.reference_start) / \
+                (self.condensed[-1][2] - self.condensed[0][1]), 3)
 
-            # get min_end_proximity
-            read_bounds = [
-                self.rec_1.reference_start, self.rec_1.reference_start + len(self.segment_1),
-                self.rec_2.reference_start, self.rec_2.reference_start + len(self.segment_2)]
-            self.min_end_proximity = min(
-                [abs(pos - bound) for bound in read_bounds for pos in phase_change_variants])
+        # get min_end_proximity
+        read_bounds = [
+            self.rec_1.reference_start, self.rec_1.reference_start + len(self.segment_1),
+            self.rec_2.reference_start, self.rec_2.reference_start + len(self.segment_2)]
+        self.min_end_proximity = min(
+            [abs(pos - bound) for bound in read_bounds for pos in self.phase_change_variants])
 
-            # get indels for calculation of indel attributes
-            indels = []
-            for rec in [self.rec_1, self.rec_2]:
-                idx = rec.reference_start
-                for op, basecount in rec.cigartuples:
-                    if op == 0:
-                        idx += basecount
-                    elif op == 1:
-                        # type, ref_start_idx, ref_end_idx, indel_length
-                        indels.append(['ins', idx, idx, basecount])
-                    elif op == 2:
-                        indels.append(['del', idx, idx + basecount, basecount])
-            # overlapping reads may have the same indel register twice
-            self.indels = list(indel for indel, _ in itertools.groupby(indels)) 
+        # get indels for calculation of indel attributes
+        indels = []
+        for rec in [self.rec_1, self.rec_2]:
+            idx = rec.reference_start
+            for op, basecount in rec.cigartuples:
+                if op == 0:
+                    idx += basecount
+                elif op == 1:
+                    # type, ref_start_idx, ref_end_idx, indel_length
+                    indels.append(['ins', idx, idx, basecount])
+                elif op == 2:
+                    indels.append(['del', idx, idx + basecount, basecount])
+        # overlapping reads may have the same indel register twice
+        self.indels = list(indel for indel, _ in itertools.groupby(indels)) 
 
-            if indels:
+        if indels:
+            self.indel_proximity = min(abs(np.concatenate(
+                [np.array(self.phase_change_variants) - pos
+                 for indel in self.indels
+                 for pos in indel[1:3]])))
 
-                self.indel_proximity = min(abs(np.concatenate(
-                    [np.array(phase_change_variants) - pos
-                     for indel in self.indels
-                     for pos in indel[1:3]])))
+            # length of most proximate indel
+            for indel in self.indels:
+                diffs = np.concatenate(
+                    [abs(np.array(self.phase_change_variants) - pos)
+                    for pos in indel[1:3]])
+                if self.indel_proximity in diffs:
+                    self.proximate_indel_length = indel[-1]
+                    break
+        else:
+            self.indel_proximity = -1
+            self.proximate_indel_length = -1
 
-                # length of most proximate indel
-                for indel in self.indels:
-                    diffs = np.concatenate(
-                        [abs(np.array(phase_change_variants) - pos)
-                        for pos in indel[1:3]])
-                    if self.indel_proximity in diffs:
-                        self.proximate_indel_length = indel[-1]
-                        break
-            else:
-                self.indel_proximity = -1
-                self.proximate_indel_length = -1
-            
+        # base qual metrics
+        self.min_base_qual = min(site[-1] for site in self.detection)
+        self.mean_base_qual = round(
+            sum(site[-1] for site in self.detection) / len(self.detection), 2)
+
 
     def _describe_gene_conversion(self, vcf):
         """
@@ -741,14 +754,14 @@ class Pair():
             self.overlap = True
 
         for site in overlapping_sites:
-            read_1_call = [(hap, pos, base) for hap, pos, base in self.detection_1 if pos == site][0]
-            read_2_call = [(hap, pos, base) for hap, pos, base in self.detection_2 if pos == site][0]
+            read_1_call = [(hap, pos, base, qual) for hap, pos, base, qual in self.detection_1 if pos == site][0]
+            read_2_call = [(hap, pos, base, qual) for hap, pos, base, qual in self.detection_2 if pos == site][0]
 
-            # if calls at same site disagree, remove variant from consideration
-            if read_1_call != read_2_call:
+            # if parental hap calls at same site disagree, remove variant from consideration
+            if read_1_call[0] != read_2_call[0]:
                 self.detection_1.remove(read_1_call)
                 self.detection_2.remove(read_2_call)
-            elif read_1_call == read_2_call:
+            elif read_1_call[0] == read_2_call[0]:
                 self.detection_2.remove(read_2_call) # only remove from right read
 
         # check if there is any overlap at all

@@ -48,6 +48,8 @@ def arg_parser():
         help='Filtering method to use (midpoint/overlap/nuclear) - see docs')
     parser.add_argument('-l', '--read_length_filter', required=False, type=int, 
         help='Filter out false positive reads below specified length threshold (default 0)')
+    parser.add_argument('-q', '--base_qual_filter', required=False, type=int, 
+        help='Ignore phase change variants in fp reads below specified base qual filter (default 0)')
     parser.add_argument('--false_bed_out', required=False, type=str, 
         help='Where to save false phase change bed file [optional]')
     parser.add_argument('--false_bed_in', required=False, type=str, 
@@ -56,12 +58,13 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.4.0')
+    parser.add_argument('--version', action='version', version='readcomb 0.4.1')
 
     return parser
 
 class BedGenerator():
-    def __init__(self, false_plus, false_minus, vcf_fname, method, read_length_filter, bed_fname):
+    def __init__(self, false_plus, false_minus, vcf_fname, method,
+        read_length_filter, base_qual, bed_fname):
         """Generate BED file of false positive midpoints
 
         BED format will depend on what filtering method is requested -
@@ -85,6 +88,8 @@ class BedGenerator():
             one of 'midpoint', 'overlap', or 'nuclear'
         read_length_filter : int
             filter out false positive reads below this size (default 0)
+        base_qual : int
+            ignore informative sites in reads below this base quality (default 0)
         bed_fname : str
             path to bed outfile
         """
@@ -98,6 +103,11 @@ class BedGenerator():
             self.read_length_filter = read_length_filter
         else:
             self.read_length_filter = 0
+
+        if base_qual:
+            self.base_qual = base_qual
+        else:
+            self.base_qual = 0
 
         self.bed_fname = bed_fname
         if not self.bed_fname: # if fname not provided - generate temp bed
@@ -139,7 +149,7 @@ class BedGenerator():
         # iterate through false positives
         for i, reader in enumerate([plus_reader, minus_reader]):
             for pair in tqdm(reader, desc=f'parental false positive bed generation {i+1}'):
-                pair.classify(masking=0)
+                pair.classify(masking=0, quality=self.base_qual)
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
@@ -192,7 +202,7 @@ class BedGenerator():
         # iterate through false positives
         for i, reader in enumerate([plus_reader, minus_reader]):
             for pair in tqdm(reader, desc=f'parental false positive bed generation {i+1}/2'):
-                pair.classify(masking=0)
+                pair.classify(masking=0, quality=self.base_qual)
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
@@ -238,7 +248,7 @@ class BedGenerator():
         # iterate through false positives
         for i, reader in enumerate([plus_reader, minus_reader]):
             for pair in tqdm(reader, desc=f'parental false positive bed generation {i+1}/2'):
-                pair.classify(masking=0)
+                pair.classify(masking=0, quality=self.base_qual)
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
@@ -413,7 +423,7 @@ class FalsePositiveFilterer():
 
         for pair in tqdm(reader, desc=f'filtering {self.fname}'):
             log_row['total_pairs'] += 1
-            pair.classify(masking=0)
+            pair.classify(masking=0, quality=0)
             if pair.call == 'no_phase_change':
                 log_row['no_phase_change'] += 1
                 continue
@@ -519,6 +529,8 @@ def handle_bed(args):
         false_minus=args.false_minus,
         vcf_fname=args.vcf,
         method=args.method,
+        read_length_filter=args.read_length_fitler,
+        base_qual=args.base_qual,
         bed_fname=args.false_bed_out)
 
     bed_generator.generate_bed() # will use method specified above
