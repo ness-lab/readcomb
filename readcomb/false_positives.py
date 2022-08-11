@@ -58,7 +58,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.4.2')
+    parser.add_argument('--version', action='version', version='readcomb 0.4.3')
 
     return parser
 
@@ -153,8 +153,8 @@ class BedGenerator():
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
-                    pair.rec_1.query_sequence > self.read_length_filter and
-                    pair.rec_2.query_sequence > self.read_length_filter
+                    len(pair.rec_1.query_sequence) > self.read_length_filter and
+                    len(pair.rec_2.query_sequence) > self.read_length_filter
                 ):
                     continue
                 else:
@@ -163,7 +163,7 @@ class BedGenerator():
                         if variant[0] != 'N']
                     prev_hap, prev_pos = detection_filt[0][:2] # set to first hap
                     for variant in detection_filt:
-                        hap, pos, base = variant
+                        hap, pos, base, qual = variant
                         if hap == prev_hap:
                             prev_pos = pos # update variable
                             continue
@@ -206,8 +206,8 @@ class BedGenerator():
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
-                    pair.rec_1.query_sequence > self.read_length_filter and
-                    pair.rec_2.query_sequence > self.read_length_filter
+                    len(pair.rec_1.query_sequence) > self.read_length_filter and
+                    len(pair.rec_2.query_sequence) > self.read_length_filter
                 ):
                     continue
                 else:
@@ -252,8 +252,8 @@ class BedGenerator():
                 if pair.call == 'no_phase_change': # ignore if no phase change
                     continue
                 if not (
-                    pair.rec_1.query_sequence > self.read_length_filter and
-                    pair.rec_2.query_sequence > self.read_length_filter
+                    len(pair.rec_1.query_sequence) > self.read_length_filter and
+                    len(pair.rec_2.query_sequence) > self.read_length_filter
                 ):
                     continue
                 else:
@@ -353,7 +353,7 @@ class BedGenerator():
         if tabix_bed:
             print('[readcomb] bgzip and tabix on bed file...')
             bgzip_proc = subprocess.run(['bgzip', self.bed_fname])
-            tabix_proc = subprocess.run(['tabix', self.bed_fname + '.gz'])
+            tabix_proc = subprocess.run(['tabix', '-b2', '-e3', self.bed_fname + '.gz'])
             print('[readcomb] complete.')
 
 
@@ -473,7 +473,7 @@ class FalsePositiveFilterer():
 
     def _filter_midpoint(self, pair, chrom, start, end, false_lookup):
         # reduce pair.detection output for comparison
-        detection_reduced = [(hap, pos) for hap, pos, base in pair.detection]
+        detection_reduced = [(hap, pos) for hap, pos, base, qual in pair.detection]
         # iterate over false reads
         for false_read in false_lookup:
             chrom, pos1, pos2, hap1, hap2, parent = false_read.split('\t')
