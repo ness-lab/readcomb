@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.3'
+__version__ = '0.4.4'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -372,45 +372,11 @@ class Pair():
         else:
             self.call = 'no_phase_change'
 
-        if self.rec_2.reference_start + len(self.segment_2) \
-            - self.rec_1.reference_start < masking * 2:
-            # masking size is too large for pair
-            self.masked_condensed = None
-            self.masked_call = None
-            return
-
-        mask_start = self.rec_1.reference_start + masking
-        mask_end = self.rec_2.reference_start + len(self.segment_2) - masking
-        self.masked_detection = [
-            v for v in self.detection if mask_start < v[1] < mask_end]
-
-        # create masked_condensed from masked detection
-        # [(haplotype, beginning, end), ...]
-        self.masked_condensed = self._create_condensed(self.masked_detection)
-
-        # create list of just haplotype information no range from condensed
-        masked_haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
-
-        # classify masked_condensed
-        if len(masked_haplotypes) == 2:
-            self.masked_call = 'cross_over'
-        elif len(masked_haplotypes) == 3:
-            self.masked_call = 'gene_conversion'
-        elif len(masked_haplotypes) > 3:
-            self.masked_call = 'complex'
-        else:
-            self.masked_call = 'no_phase_change'
 
         # convert haplotypes 1/2/N to VCF sample names
         samples = vcf.samples
 
         for tupl in self.condensed:
-            if tupl[0] == '1':
-                tupl[0] = samples[0]
-            elif tupl[0] == '2':
-                tupl[0] = samples[1]
-
-        for tupl in self.masked_condensed:
             if tupl[0] == '1':
                 tupl[0] = samples[0]
             elif tupl[0] == '2':
@@ -429,6 +395,43 @@ class Pair():
             self.conversion_tract = 'N/A'
 
         self.midpoint, self.relative_midpoint = self.get_midpoint()
+
+        # masking stuff
+        if self.rec_2.reference_start + len(self.segment_2) \
+            - self.rec_1.reference_start < masking * 2:
+            # masking size is too large for pair
+            self.masked_condensed = None
+            self.masked_call = None
+            return # don't set masking attributes
+
+        mask_start = self.rec_1.reference_start + masking
+        mask_end = self.rec_2.reference_start + len(self.segment_2) - masking
+        self.masked_detection = [
+            v for v in self.detection if mask_start < v[1] < mask_end]
+
+        # create masked_condensed from masked detection
+        # [(haplotype, beginning, end), ...]
+
+        self.masked_condensed = self._create_condensed(self.masked_detection)
+        for tupl in self.masked_condensed:
+            if tupl[0] == '1':
+                tupl[0] = samples[0]
+            elif tupl[0] == '2':
+                tupl[0] = samples[1]
+
+        # create list of just haplotype information in range from condensed
+        masked_haplotypes = [tupl[0] for tupl in self.masked_condensed if tupl[0] != 'N']
+
+        # classify masked_condensed
+        if len(masked_haplotypes) == 2:
+            self.masked_call = 'cross_over'
+        elif len(masked_haplotypes) == 3:
+            self.masked_call = 'gene_conversion'
+        elif len(masked_haplotypes) > 3:
+            self.masked_call = 'complex'
+        else:
+            self.masked_call = 'no_phase_change'
+
 
     def _create_condensed(self, detection):
         """
@@ -621,7 +624,7 @@ class Pair():
         """
         self.gene_conversion_len = self.condensed[-1][1] - self.condensed[0][2]
 
-        # converted haplotype and variants
+        # converted haplotype, variants, and tract
         self.converted_haplotype = [
             hap for hap, count in self.variant_counts.items() 
             if count == min(self.variant_counts.values())][0]
@@ -634,10 +637,10 @@ class Pair():
         elif self.converted_haplotype == '2':
             self.converted_haplotype = vcf.samples[1]
 
-        # get conversion tract
         self.conversion_tract = np.array([
             tract for tract in self.condensed 
             if tract[0] == self.converted_haplotype][0][1:])
+
 
     def _get_mismatch_variant_ratio(self):
         """
