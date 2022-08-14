@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.4'
+__version__ = '0.4.5'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -445,10 +445,11 @@ class Pair():
         """
         condensed = []
 
+        # remove Ns from consideration
+        detection = [v for v in detection if v[0] != 'N']
+
         for variant in detection:
             haplotype, location, base, qual = variant
-            if haplotype == 'N':
-                continue
 
             # first variant
             if len(condensed) == 0:
@@ -478,7 +479,7 @@ class Pair():
                         len(self.segment_2)
 
         # this occurs during false positive phase changes when reads overlap
-        if any(start == end for hap, start, end in condensed):
+        if any(start == end for hap, start, end in condensed) and self.overlap:
             for false_hap in [h for h in condensed if h[1] == h[2]]:
                 condensed.remove(false_hap)
         
@@ -783,9 +784,9 @@ class Pair():
             segment_1 = self.segment_1[region[0]:region[1]]
             segment_2 = self.segment_2[0:overlap_size]
             if segment_1 != segment_2: # compare full strings
-                self.overlap_disagree = False
-            else:
                 self.overlap_disagree = True
+            elif segment_1 == segment_2:
+                self.overlap_disagree = False
 
     def get_midpoint(self):
         """
