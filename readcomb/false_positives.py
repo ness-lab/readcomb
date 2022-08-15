@@ -58,7 +58,7 @@ def arg_parser():
         help='Path to log file')
     parser.add_argument('-o', '--out', required=True, type=str,
         help='File to write filtered reads to')
-    parser.add_argument('--version', action='version', version='readcomb 0.4.6')
+    parser.add_argument('--version', action='version', version='readcomb 0.4.7')
 
     return parser
 
@@ -321,13 +321,13 @@ class BedGenerator():
         """
         # 'cat {in} | (sed -u 1q; sort -k1,1 -k2n,3n) | uniq > {out}'
         # write header to separate file
-        header_file = open('header.temp', 'w')
+        header_file = open(f'{self.bed_fname}.header.temp', 'w')
         header_proc = subprocess.run(
             ['head', '-n', '1', self.bed_fname], stdout=header_file)
         header_file.close()
 
         # sort + uniq rest of file
-        sorted_file = open('sorted.temp', 'w')
+        sorted_file = open(f'{self.bed_fname}.sorted.temp', 'w')
         header_remove_proc = subprocess.Popen(['tail', '-n', '+2', self.bed_fname], 
             stdout=subprocess.PIPE)
         sort_proc = subprocess.Popen(['sort', '-k1,1', '-k2n,3n'], 
@@ -339,15 +339,16 @@ class BedGenerator():
 
         # combine header and sorted file
         final_bed = open(self.bed_fname, 'w')
-        cat_proc = subprocess.run(['cat', 'header.temp', 'sorted.temp'],
+        cat_proc = subprocess.run(
+            ['cat', f'{self.bed_fname}.header.temp', f'{self.bed_fname}.sorted.temp'],
             stdout=final_bed)
         final_bed.close()
         print('[readcomb] created bed file')
         print('[readcomb] clearing temp files...')
 
         # clear temp files
-        os.remove('header.temp')
-        os.remove('sorted.temp')
+        os.remove(f'{self.bed_fname}.header.temp')
+        os.remove(f'{self.bed_fname}.sorted.temp')
 
         # bgzip and tabix file
         if tabix_bed:
