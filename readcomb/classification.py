@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.5'
+__version__ = '0.4.6'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -469,14 +469,9 @@ class Pair():
                 condensed.append([haplotype, midpoint, midpoint])
 
             # last variant
-            if len(self.detection_2) == 0:
-                if variant == self.detection_1[-1]:
-                    condensed[-1][2] = self.rec_1.reference_start + \
-                        len(self.segment_1)
-            else:
-                if variant == self.detection_2[-1]:
-                    condensed[-1][2] = self.rec_2.reference_start + \
-                        len(self.segment_2)
+            if variant == detection[-1]:
+                condensed[-1][2] = self.rec_2.reference_start + \
+                    len(self.segment_2)
 
         # this occurs during false positive phase changes when reads overlap
         if any(start == end for hap, start, end in condensed) and self.overlap:
