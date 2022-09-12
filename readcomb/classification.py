@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.7'
+__version__ = '0.4.8'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -181,6 +181,7 @@ class Pair():
 
         # quality metrics
         self.overlap = None
+        self.overlapping_sites = None
         self.overlap_disagree = None
         self.variants_per_haplotype = -1
         self.min_variants_in_haplotype = -1
@@ -563,8 +564,31 @@ class Pair():
         read_bounds = [
             self.rec_1.reference_start, self.rec_1.reference_start + len(self.segment_1),
             self.rec_2.reference_start, self.rec_2.reference_start + len(self.segment_2)]
-        self.min_end_proximity = min(
-            [abs(pos - bound) for bound in read_bounds for pos in self.phase_change_variants])
+        if not self.overlap:
+            self.min_end_proximity = min(
+                [abs(pos - bound) for bound in read_bounds for pos in self.phase_change_variants])
+        elif self.overlap: 
+            # only applies to concordant phase change variant overlap
+            # discordant overlapping sites are removed anyways
+            # very brute force... sigh
+            current_min = None
+            for pos in self.phase_change_variants:
+                # iterate through variants and update min variable
+                if pos in self.overlapping_sites:
+                    # find longer read end
+                    read1_min = min([abs(pos - bound) for bound in read_bounds[:2]])
+                    read2_min = min([abs(pos - bound) for bound in read_bounds[2:]])
+                    pos_min = max(read1_min, read2_min)
+                elif pos not in self.overlapping_sites:
+                    pos_min = min([abs(pos - bound) for bound in read_bounds])
+                # update current min
+                if not current_min:
+                    current_min = pos_min
+                elif current_min > pos_min: # new min found
+                    current_min = pos_min
+                elif current_min <= pos_min:
+                    continue
+            self.min_end_proximity = current_min
 
         # get indels for calculation of indel attributes
         indels = []
@@ -745,14 +769,14 @@ class Pair():
         accordingly).
         """
         # check variant site overlap first
-        overlapping_sites = list(set(var[1] for var in self.detection_1).intersection(
+        self.overlapping_sites = list(set(var[1] for var in self.detection_1).intersection(
             set(var[1] for var in self.detection_2)))
 
         # set self.overlap to True if variant sites overlap
-        if overlapping_sites and not self.overlap:
+        if self.overlapping_sites and not self.overlap:
             self.overlap = True
 
-        for site in overlapping_sites:
+        for site in self.overlapping_sites:
             read_1_call = [(hap, pos, base, qual) for hap, pos, base, qual in self.detection_1 if pos == site][0]
             read_2_call = [(hap, pos, base, qual) for hap, pos, base, qual in self.detection_2 if pos == site][0]
 
