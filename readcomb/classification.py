@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.8'
+__version__ = '0.4.9'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -580,7 +580,14 @@ class Pair():
                     read2_min = min([abs(pos - bound) for bound in read_bounds[2:]])
                     pos_min = max(read1_min, read2_min)
                 elif pos not in self.overlapping_sites:
-                    pos_min = min([abs(pos - bound) for bound in read_bounds])
+                    # site only present on one read - need to just use those boundaries
+                    if read_bounds[0] <= pos <= read_bounds[1]:
+                        pos_min = min([abs(pos - bound) for bound in read_bounds[:2]])
+                    elif read_bounds[2] <= pos <= read_bounds[3]:
+                        pos_min = min([abs(pos - bound) for bound in read_bounds[2:]])
+                    else:
+                        raise ValueError(
+                            'error getting end proximity - variant outside read bounds')
                 # update current min
                 if not current_min:
                     current_min = pos_min
