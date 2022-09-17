@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.10'
+__version__ = '0.4.11'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -827,7 +827,7 @@ class Pair():
                 self.detection_1.remove(read_1_call)
                 self.detection_2.remove(read_2_call)
             elif read_1_call[0] == read_2_call[0]:
-                if read_2_call[-1] > read_1_call[0]: # qual is higher in right read
+                if int(read_2_call[-1]) > int(read_1_call[-1]): # qual is higher in right read
                     # keep variant with higher qual for quality metrics
                     self.detection_2.remove(read_1_call)
                 else:
