@@ -24,7 +24,7 @@ except ImportError as e:
     from filter import cigar
     from filter import qualities_cigar
 
-__version__ = '0.4.12'
+__version__ = '0.4.13'
 
 def downstream_phase_detection(variants, segment, record, quality):
     """
@@ -149,6 +149,22 @@ class Pair():
             self.rec_2 = record1
         else:
             self.rec_1 = record2
+            self.rec_2 = record1
+
+        # check for rare instance where reads start in same pos but read 2 is shorter
+        if (
+            record1.reference_start == record2.reference_start and
+            len(cigar(self.rec_2)) < len(cigar(self.rec_1))
+        ):
+            self.rec_1, self.rec_2 = self.rec_2, self.rec_1
+
+        # or rarer instance where one read completely encompasses the other
+        # just assume we have two of the longer read in full overlap
+        elif (
+            record1.reference_start < record2.reference_start and
+            record1.reference_end > record2.reference_end
+        ):
+            self.rec_1 = record1
             self.rec_2 = record1
 
         self.vcf_filepath = vcf_filepath
